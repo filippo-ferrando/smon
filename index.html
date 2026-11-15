@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Second Monitor</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #000; }
+  video { width: 100vw; height: 100vh; object-fit: contain; display: block; }
+  #msg { position: fixed; top: 8px; left: 8px; color: #ccc; font: 14px system-ui, sans-serif; }
+</style>
+<video id="v" muted autoplay playsinline></video>
+<div id="msg">connecting…</div>
+<script>
+const v = document.getElementById('v'), msg = document.getElementById('msg');
+async function start() {
+  const pc = new RTCPeerConnection();
+  pc.addTransceiver('video', { direction: 'recvonly' });
+  pc.ontrack = e => { v.srcObject = e.streams[0] || new MediaStream([e.track]); msg.textContent = ''; };
+  pc.onconnectionstatechange = () => {
+    if (['failed', 'disconnected'].includes(pc.connectionState)) {
+      msg.textContent = 'reconnecting…'; pc.close(); setTimeout(start, 1000);
+    }
+  };
+  await pc.setLocalDescription(await pc.createOffer());
+  await new Promise(r => pc.iceGatheringState === 'complete' ? r() :
+    pc.addEventListener('icegatheringstatechange', () => pc.iceGatheringState === 'complete' && r()));
+  const res = await fetch('/offer' + location.search, { method: 'POST', body: JSON.stringify(pc.localDescription) });
+  if (!res.ok) { msg.textContent = 'error: ' + await res.text(); return; }
+  await pc.setRemoteDescription(await res.json());
+}
+v.ondblclick = () => document.fullscreenElement ? document.exitFullscreen() : v.requestFullscreen();
+start().catch(e => msg.textContent = 'error: ' + e);
+</script>
+</html>
