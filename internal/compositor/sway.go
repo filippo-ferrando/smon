@@ -55,7 +55,7 @@ func swayReply(b []byte) error {
 	return nil
 }
 
-func (s *sway) CreateOutput(w, h, fps int, pos string) (string, error) {
+func (s *sway) CreateOutput(spec OutputSpec) (string, error) {
 	if old, err := os.ReadFile(swayState()); err == nil {
 		s.DestroyOutput(strings.TrimSpace(string(old))) // stale output from a crash
 	}
@@ -77,9 +77,10 @@ func (s *sway) CreateOutput(w, h, fps int, pos string) (string, error) {
 	_ = os.MkdirAll(config.Dir(), 0o700)
 	_ = os.WriteFile(swayState(), []byte(name), 0o600) // best effort: only crash cleanup needs it
 
-	cmd := fmt.Sprintf("output %s mode %dx%d@%dHz", name, w, h, fps)
-	if pos != "" {
-		x, y, ok, err := placeXY(after, name, pos, w, h)
+	cmd := swayOutputCmd(name, spec)
+	if spec.Pos != "" {
+		w, h := spec.Logical()
+		x, y, ok, err := placeXY(after, name, spec.Pos, w, h)
 		if err != nil {
 			s.DestroyOutput(name)
 			return "", err
@@ -93,6 +94,15 @@ func (s *sway) CreateOutput(w, h, fps int, pos string) (string, error) {
 		return "", err
 	}
 	return name, nil
+}
+
+// swayOutputCmd sets the new output's mode and scale.
+func swayOutputCmd(name string, spec OutputSpec) string {
+	cmd := fmt.Sprintf("output %s mode %dx%d@%dHz", name, spec.W, spec.H, spec.FPS)
+	if spec.Scaled() {
+		cmd += " scale " + spec.scaleArg()
+	}
+	return cmd
 }
 
 // newOutput returns the first output in after that is not in before.

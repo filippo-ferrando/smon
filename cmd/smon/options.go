@@ -20,6 +20,8 @@ type options struct {
 	target string // cast only: miracast:..., airplay:... or webos:...
 
 	width, height, fps, kbps int
+	scale                    float64
+	portrait                 bool
 
 	pos        string
 	mode       string
@@ -47,6 +49,8 @@ func parseArgs(args []string) options {
 	fs.IntVar(&o.height, "h", 1080, "height")
 	fs.IntVar(&o.fps, "fps", 30, "frame rate")
 	fs.IntVar(&o.kbps, "kbps", 8000, "video bitrate")
+	fs.Float64Var(&o.scale, "scale", 1, "extend: output scale; 2 makes everything twice as big, for a high-DPI tablet")
+	fs.BoolVar(&o.portrait, "portrait", false, "extend: portrait monitor (swaps -w and -h), for a tablet held upright")
 	fs.StringVar(&o.pos, "pos", "", "extend: initial placement right|left|above|below (default: umbriel's saved display layout, the compositor's own placement elsewhere; on umbriel rearranging in the displays plugin always wins)")
 	fs.StringVar(&o.mode, "mode", "extend", "extend: new virtual monitor; mirror: duplicate an existing screen")
 	fs.StringVar(&o.addr, "addr", ":8080", "web/webos: listen address (TCP and UDP); usb: only the port is used")
@@ -59,6 +63,17 @@ func parseArgs(args []string) options {
 	fs.BoolVar(&o.newToken, "new-token", false, "web/usb: replace the saved access token, so old URLs stop working")
 	_ = fs.Parse(args[1:]) // ExitOnError: never returns an error
 
+	if o.scale < 0.25 || o.scale > 4 {
+		fmt.Fprintf(os.Stderr, "bad -scale %g (0.25 to 4)\n", o.scale)
+		os.Exit(2)
+	}
+	if o.mode == "mirror" && (o.scale != 1 || o.portrait) {
+		fmt.Fprintln(os.Stderr, "-scale and -portrait apply to extend mode only")
+		os.Exit(2)
+	}
+	if o.portrait && o.width > o.height {
+		o.width, o.height = o.height, o.width
+	}
 	switch o.cmd {
 	case "list", "web", "usb":
 	case "cast":

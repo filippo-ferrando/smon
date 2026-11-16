@@ -1,6 +1,7 @@
 package display
 
 import (
+	"fmt"
 	"testing"
 
 	"smon/internal/compositor"
@@ -48,8 +49,8 @@ func (f *fakeComp) Outputs() ([]compositor.Output, error) { return f.outs, nil }
 
 type fakePortalComp struct{ fakeComp }
 
-func (f *fakePortalComp) PlaceOutput(name, pos string, _, _ int) error {
-	f.placed = name + "@" + pos
+func (f *fakePortalComp) PlaceOutput(name string, spec compositor.OutputSpec) error {
+	f.placed = fmt.Sprintf("%s@%s %dx%d", name, spec.Pos, spec.W, spec.H)
 	return nil
 }
 
@@ -63,7 +64,7 @@ func out(name string, x, y int) compositor.Output {
 // Plasma 6.8+: a virtual source with mapping_id and the size picked in the dialog.
 func TestPortalVirtualSource(t *testing.T) {
 	c := &fakePortalComp{}
-	d := &Display{W: 1920, H: 1080, comp: c, portalOut: true, pos: "left"}
+	d := &Display{W: 1920, H: 1080, comp: c, portalOut: true, spec: compositor.OutputSpec{Pos: "left", Scale: 2}}
 	props := map[string]dbus.Variant{
 		"source_type": dbus.MakeVariant(uint32(4)),
 		"mapping_id":  dbus.MakeVariant("Virtual-smon"),
@@ -72,7 +73,7 @@ func TestPortalVirtualSource(t *testing.T) {
 	if err := d.checkSource("extend", props); err != nil {
 		t.Fatal(err)
 	}
-	if d.output != "Virtual-smon" || d.want != "Virtual-smon" || d.W != 2560 || d.H != 1440 || c.placed != "Virtual-smon@left" {
+	if d.output != "Virtual-smon" || d.want != "Virtual-smon" || d.W != 2560 || d.H != 1440 || c.placed != "Virtual-smon@left 2560x1440" {
 		t.Errorf("got output=%s want=%s %dx%d placed=%s", d.output, d.want, d.W, d.H, c.placed)
 	}
 }

@@ -27,15 +27,15 @@ type Display struct {
 	W, H, FPS int
 	virtual   bool
 	comp      compositor.Compositor
-	want      string              // extend: the virtual output's name ("" until the portal names it)
-	portalOut bool                // extend: the portal creates the output (compositor.PortalOutput)
-	pos       string              // extend: -pos, for a portal-made output
-	before    []compositor.Output // extend, portal-made: the outputs before it existed
-	output    string              // captured output name (the virtual one, or the mirrored screen)
-	touch     *touch.Touch        // virtual touchscreen, if input is enabled
-	pen       *touch.Pen          // virtual pen tablet, if input is enabled
-	cleanup   []func()            // extra teardown, run by Close
-	done      chan struct{}       // stops the layout watcher
+	want      string                // extend: the virtual output's name ("" until the portal names it)
+	portalOut bool                  // extend: the portal creates the output (compositor.PortalOutput)
+	spec      compositor.OutputSpec // extend: what was asked for, for a portal-made output
+	before    []compositor.Output   // extend, portal-made: the outputs before it existed
+	output    string                // captured output name (the virtual one, or the mirrored screen)
+	touch     *touch.Touch          // virtual touchscreen, if input is enabled
+	pen       *touch.Pen            // virtual pen tablet, if input is enabled
+	cleanup   []func()              // extra teardown, run by Close
+	done      chan struct{}         // stops the layout watcher
 	node      uint32
 	fd        *os.File
 	conn      *dbus.Conn
@@ -45,8 +45,8 @@ type Display struct {
 // existing ones (SMON-1 where smon names it); "mirror" duplicates an existing screen. The first run of
 // each mode shows the share picker; its restore token (one per mode) makes
 // later runs silent.
-func New(comp compositor.Compositor, w, h, fps int, pos, mode string) (*Display, error) {
-	d := &Display{W: w, H: h, FPS: fps, comp: comp, virtual: mode == "extend", pos: pos}
+func New(comp compositor.Compositor, spec compositor.OutputSpec, mode string) (*Display, error) {
+	d := &Display{W: spec.W, H: spec.H, FPS: spec.FPS, comp: comp, virtual: mode == "extend", spec: spec}
 	hint := "smon: in the share picker choose the screen to duplicate"
 	switch mode {
 	case "extend":
@@ -56,7 +56,7 @@ func New(comp compositor.Compositor, w, h, fps int, pos, mode string) (*Display,
 			hint = "smon: in the share dialog allow the new virtual display (on Plasma 6.8+ choose its resolution there)"
 			break
 		}
-		name, err := comp.CreateOutput(w, h, fps, pos)
+		name, err := comp.CreateOutput(spec)
 		if err != nil {
 			return nil, err
 		}
@@ -203,7 +203,9 @@ func (d *Display) checkSource(mode string, props map[string]dbus.Variant) error 
 		}
 		fmt.Fprintf(os.Stderr, "smon: streaming %s (%dx%d)\n", name, d.W, d.H)
 		if p, ok := d.comp.(compositor.PortalOutput); ok {
-			if err := p.PlaceOutput(name, d.pos, d.W, d.H); err != nil {
+			spec := d.spec
+			spec.W, spec.H = d.W, d.H // the size the portal made
+			if err := p.PlaceOutput(name, spec); err != nil {
 				fmt.Fprintf(os.Stderr, "smon: placing %s: %v\n", name, err)
 			}
 		}

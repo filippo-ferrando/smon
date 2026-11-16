@@ -29,13 +29,22 @@ func inputKey(dev touch.Device) string {
 	return "input.touch.map_to_output"
 }
 
-func (u umbriel) CreateOutput(w, h, fps int, pos string) (string, error) {
+const scaleKey = "output." + OutputName + ".scale"
+
+func (u umbriel) CreateOutput(spec OutputSpec) (string, error) {
 	name := OutputName
 	_ = exec.Command("umbriel", "output-destroy", name).Run() // stale output from a crash
-	if out, err := exec.Command("umbriel", "output-create", name, fmt.Sprintf("%dx%d@%d", w, h, fps)).CombinedOutput(); err != nil {
+	if out, err := exec.Command("umbriel", "output-create", name, fmt.Sprintf("%dx%d@%d", spec.W, spec.H, spec.FPS)).CombinedOutput(); err != nil {
 		return "", fmt.Errorf("umbriel output-create: %v: %s", err, out)
 	}
-	if err := u.layout(pos, w, h); err != nil {
+	if spec.Scaled() {
+		if out, err := exec.Command("umbriel", "config", "set", scaleKey, spec.scaleArg()).CombinedOutput(); err != nil {
+			u.DestroyOutput(name)
+			return "", fmt.Errorf("umbriel config set %s: %v: %s", scaleKey, err, out)
+		}
+	}
+	w, h := spec.Logical()
+	if err := u.layout(spec.Pos, w, h); err != nil {
 		u.DestroyOutput(name)
 		return "", err
 	}
@@ -45,6 +54,7 @@ func (u umbriel) CreateOutput(w, h, fps int, pos string) (string, error) {
 func (umbriel) DestroyOutput(name string) {
 	_ = exec.Command("umbriel", "output-destroy", name).Run()
 	unsetPos() // leave no override behind to fight the saved layout
+	_ = exec.Command("umbriel", "config", "unset", scaleKey).Run()
 }
 
 func (umbriel) MapInput(dev touch.Device, output string) error {

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 
 	"smon/internal/touch"
@@ -15,15 +16,44 @@ import (
 // compositor lets it pick the name (umbriel, Hyprland).
 const OutputName = "SMON-1"
 
+// OutputSpec is the virtual output smon asks for: W x H pixels at FPS,
+// placed Pos (""; or right|left|above|below) and scaled by Scale (0 or 1: not
+// scaled; 2 makes everything on it twice as big, for a high-DPI tablet).
+type OutputSpec struct {
+	W, H, FPS int
+	Pos       string
+	Scale     float64
+}
+
+// scale is the output scale, 1 when unset.
+func (s OutputSpec) scale() float64 {
+	if s.Scale <= 0 {
+		return 1
+	}
+	return s.Scale
+}
+
+// Scaled reports whether the output asks for a scale other than 1.
+func (s OutputSpec) Scaled() bool { return s.scale() != 1 }
+
+// Logical is the output's size in layout coordinates: its pixels divided by
+// its scale.
+func (s OutputSpec) Logical() (w, h int) {
+	sc := s.scale()
+	return int(float64(s.W)/sc + 0.5), int(float64(s.H)/sc + 0.5)
+}
+
+// scaleArg formats the scale the way the compositors' commands take it.
+func (s OutputSpec) scaleArg() string { return strconv.FormatFloat(s.scale(), 'f', -1, 64) }
+
 // Compositor is everything smon needs from the compositor beyond the
 // xdg-desktop-portal ScreenCast interface, which is the same on all of them.
 type Compositor interface {
 	Name() string
 	// CreateOutput adds the virtual output (removing a stale one from a crash
-	// first), places it, and returns its name: pos is "" (compositor default)
-	// or right|left|above|below. It returns "" when the ScreenCast portal
-	// creates the output instead (see PortalOutput).
-	CreateOutput(w, h, fps int, pos string) (string, error)
+	// first), places and scales it, and returns its name. It returns "" when
+	// the ScreenCast portal creates the output instead (see PortalOutput).
+	CreateOutput(spec OutputSpec) (string, error)
 	DestroyOutput(name string)
 	// WatchLayout runs until done is closed; a no-op where it does not apply.
 	WatchLayout(done chan struct{})
@@ -39,9 +69,9 @@ type Compositor interface {
 // by the ScreenCast portal (source type VIRTUAL) rather than by CreateOutput,
 // and removed when the portal session closes.
 type PortalOutput interface {
-	// PlaceOutput positions the portal-made output once its name is known;
-	// pos is as for CreateOutput.
-	PlaceOutput(name, pos string, w, h int) error
+	// PlaceOutput positions and scales the portal-made output once its name
+	// is known; spec has its actual size.
+	PlaceOutput(name string, spec OutputSpec) error
 }
 
 // Output is one monitor and where it sits in the layout, in logical pixels.

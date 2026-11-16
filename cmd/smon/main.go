@@ -40,7 +40,8 @@ func main() {
 	}
 
 	snd := newAudio(o)
-	d, err := display.New(comp, o.width, o.height, o.fps, o.pos, o.mode)
+	spec := compositor.OutputSpec{W: o.width, H: o.height, FPS: o.fps, Pos: o.pos, Scale: o.scale}
+	d, err := display.New(comp, spec, o.mode)
 	if err != nil {
 		log.Fatal(err)
 	}

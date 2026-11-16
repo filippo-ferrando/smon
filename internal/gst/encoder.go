@@ -50,8 +50,13 @@ func encoderChain(enc string, w, h, fps, kbps, gop int, q string) string {
 
 var (
 	encMu     sync.Mutex
-	encPicked = map[[2]int]string{} // by output size
+	encPicked = map[[2]int]string{} // by output size (see sizeKey)
 )
+
+// sizeKey is the key for picks at w x h: the long side first, so a portrait
+// output reuses the landscape pick instead of timing encoders again (maybe
+// while another output's pipeline is busy, which would skew the test).
+func sizeKey(w, h int) [2]int { return [2]int{max(w, h), min(w, h)} }
 
 // pickEncoder times every H.264 encoder on a short burst at w x h and returns
 // the fastest. Which one wins is not predictable: on a desktop with an RX 580
@@ -69,7 +74,7 @@ func pickEncoder(w, h, fps, kbps int) string {
 	}
 	encMu.Lock()
 	defer encMu.Unlock()
-	if e, ok := encPicked[[2]int{w, h}]; ok {
+	if e, ok := encPicked[sizeKey(w, h)]; ok {
 		return e
 	}
 	cands := encoderCandidates()
@@ -77,7 +82,7 @@ func pickEncoder(w, h, fps, kbps int) string {
 	cache := loadEncoderCache()
 	if e, ok := cache[key]; ok && slices.Contains(cands, e) {
 		log.Printf("using encoder %s (saved in %s; set SMON_ENCODER to override)", e, encoderCache())
-		encPicked[[2]int{w, h}] = e
+		encPicked[sizeKey(w, h)] = e
 		return e
 	}
 	best, bestT := "x264enc", time.Duration(1<<62)
@@ -93,7 +98,7 @@ func pickEncoder(w, h, fps, kbps int) string {
 		}
 	}
 	log.Printf("using encoder %s (set SMON_ENCODER to override)", best)
-	encPicked[[2]int{w, h}] = best
+	encPicked[sizeKey(w, h)] = best
 	if bestT < 1<<62 { // a real winner, not the fallback
 		cache[key] = best
 		saveEncoderCache(cache)
@@ -110,9 +115,10 @@ func ForgetEncoder(w, h int) {
 	}
 	encMu.Lock()
 	defer encMu.Unlock()
-	delete(encPicked, [2]int{w, h})
+	delete(encPicked, sizeKey(w, h))
 	cache := loadEncoderCache()
-	prefix := fmt.Sprintf("%dx%d ", w, h)
+	k := sizeKey(w, h)
+	prefix := fmt.Sprintf("%dx%d ", k[0], k[1])
 	n := len(cache)
 	maps.DeleteFunc(cache, func(k, _ string) bool { return strings.HasPrefix(k, prefix) })
 	if len(cache) != n {
@@ -130,7 +136,8 @@ func encoderCache() string {
 }
 
 func cacheKey(w, h int, cands []string) string {
-	return fmt.Sprintf("%dx%d %s", w, h, strings.Join(cands, ","))
+	k := sizeKey(w, h)
+	return fmt.Sprintf("%dx%d %s", k[0], k[1], strings.Join(cands, ","))
 }
 
 // loadEncoderCache returns the saved picks; empty when there are none.

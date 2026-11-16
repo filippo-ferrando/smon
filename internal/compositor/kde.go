@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os/exec"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/godbus/dbus/v5"
@@ -22,28 +23,37 @@ type kde struct{}
 func (*kde) Name() string { return "kde" }
 
 // CreateOutput returns "": the portal creates the output.
-func (*kde) CreateOutput(int, int, int, string) (string, error) { return "", nil }
+func (*kde) CreateOutput(OutputSpec) (string, error) { return "", nil }
 
 func (*kde) DestroyOutput(string) {} // closing the portal session removes it
 
 func (*kde) WatchLayout(chan struct{}) {} // KWin saves the layout itself
 
 // PlaceOutput implements PortalOutput.
-func (k *kde) PlaceOutput(name, pos string, w, h int) error {
-	if pos == "" {
-		return nil // where KWin put it
+func (k *kde) PlaceOutput(name string, spec OutputSpec) error {
+	var args []string
+	if spec.Scaled() {
+		args = append(args, fmt.Sprintf("output.%s.scale.%s", name, spec.scaleArg()))
 	}
-	outs, err := k.Outputs()
-	if err != nil {
-		return err
+	if spec.Pos != "" {
+		outs, err := k.Outputs()
+		if err != nil {
+			return err
+		}
+		w, h := spec.Logical()
+		x, y, ok, err := placeXY(outs, name, spec.Pos, w, h)
+		if err != nil {
+			return err
+		}
+		if ok {
+			args = append(args, fmt.Sprintf("output.%s.position.%d,%d", name, x, y))
+		}
 	}
-	x, y, ok, err := placeXY(outs, name, pos, w, h)
-	if err != nil || !ok {
-		return err
+	if len(args) == 0 {
+		return nil // as KWin set it up
 	}
-	arg := fmt.Sprintf("output.%s.position.%d,%d", name, x, y)
-	if out, err := exec.Command("kscreen-doctor", arg).CombinedOutput(); err != nil {
-		return fmt.Errorf("kscreen-doctor %s: %v: %s", arg, err, out)
+	if out, err := exec.Command("kscreen-doctor", args...).CombinedOutput(); err != nil {
+		return fmt.Errorf("kscreen-doctor %s: %v: %s", strings.Join(args, " "), err, out)
 	}
 	return nil
 }

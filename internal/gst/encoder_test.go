@@ -30,3 +30,14 @@ func TestEncoderCache(t *testing.T) {
 		t.Error("forgotten pick still in memory")
 	}
 }
+
+// A portrait output shares the landscape output's pick.
+func TestSizeKeyPortrait(t *testing.T) {
+	cands := []string{"vah264enc", "x264enc"}
+	if cacheKey(1080, 1920, cands) != cacheKey(1920, 1080, cands) || sizeKey(1600, 2560) != sizeKey(2560, 1600) {
+		t.Fatal("portrait and landscape keys differ")
+	}
+	if cacheKey(1920, 1080, cands) != "1920x1080 vah264enc,x264enc" {
+		t.Fatalf("landscape key changed: %q (saved picks would be lost)", cacheKey(1920, 1080, cands))
+	}
+}

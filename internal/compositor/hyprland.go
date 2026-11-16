@@ -33,11 +33,19 @@ func (h *hyprland) isLua() bool {
 func (*hyprland) Name() string { return "hyprland" }
 
 // setMonitor adds a runtime monitor rule.
-func (h *hyprland) setMonitor(name, mode, pos string) error {
+func (h *hyprland) setMonitor(name, mode, pos, scale string) error {
 	if h.isLua() {
-		return hyprOK("eval", fmt.Sprintf("hl.monitor({output = %q, mode = %q, position = %q, scale = \"1\"})", name, mode, pos))
+		return hyprOK("eval", monitorLua(name, mode, pos, scale))
 	}
-	return hyprOK("keyword", "monitor", fmt.Sprintf("%s,%s,%s,1", name, mode, pos))
+	return hyprOK("keyword", "monitor", monitorKeyword(name, mode, pos, scale))
+}
+
+func monitorLua(name, mode, pos, scale string) string {
+	return fmt.Sprintf("hl.monitor({output = %q, mode = %q, position = %q, scale = %q})", name, mode, pos, scale)
+}
+
+func monitorKeyword(name, mode, pos, scale string) string {
+	return fmt.Sprintf("%s,%s,%s,%s", name, mode, pos, scale)
 }
 
 // hyprctl runs hyprctl and returns its output.
@@ -62,16 +70,17 @@ func hyprOK(args ...string) error {
 	return nil
 }
 
-func (h *hyprland) CreateOutput(width, height, fps int, pos string) (string, error) {
+func (h *hyprland) CreateOutput(spec OutputSpec) (string, error) {
 	name := OutputName
 	_, _ = hyprctl("output", "remove", name) // stale output from a crash
 	where := "auto-right"
-	if pos != "" {
+	if spec.Pos != "" {
 		outs, err := h.Outputs()
 		if err != nil {
 			return "", err
 		}
-		x, y, ok, err := placeXY(outs, name, pos, width, height)
+		w, hh := spec.Logical()
+		x, y, ok, err := placeXY(outs, name, spec.Pos, w, hh)
 		if err != nil {
 			return "", err
 		}
@@ -80,7 +89,7 @@ func (h *hyprland) CreateOutput(width, height, fps int, pos string) (string, err
 		}
 	}
 	// The rule first, so the output comes up at the right mode and place.
-	if err := h.setMonitor(name, fmt.Sprintf("%dx%d@%d", width, height, fps), where); err != nil {
+	if err := h.setMonitor(name, fmt.Sprintf("%dx%d@%d", spec.W, spec.H, spec.FPS), where, spec.scaleArg()); err != nil {
 		return "", err
 	}
 	return name, hyprOK("output", "create", "headless", name)
