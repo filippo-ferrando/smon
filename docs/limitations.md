@@ -7,11 +7,13 @@
 
 ## Encoder selection
 
-At startup smon times every H.264 encoder (each GPU's VA-API encoder, and x264) at the output
+At startup smon times every encoder for the codec (`-codec`; for H.264 each GPU's VA-API
+encoder and x264) at the output
 size and uses the fastest. The time per frame is latency the encoder adds, and older GPUs can
 be slower than x264. The log prints the timings.
 
-- The winner is saved in `~/.cache/smon/encoder.json` per output size, so later runs start
+- The winner is saved in `~/.cache/smon/encoder.json` per codec and output size (a portrait
+  output shares the landscape one's), so later runs start
   without the benchmark.
 - The benchmark runs again when the set of encoders changes (new GPU or plugins), or when the
   capture pipeline fails within its first 10 seconds.
@@ -48,5 +50,15 @@ WebRTC viewers adapt the bitrate:
   audio is sent when the sink advertises it.
 - **Browser audio and video are not lip-synced** to each other. Both are low-latency, so the
   drift is small.
-- **Touch input** is touch only (no keyboard), and only in the browser viewer (`web`, `usb`).
-- **umbriel touch mapping** applies to every touchscreen while smon runs with `-input`.
+- **Input** (touch, pen, keyboard) works only in the browser viewer (`web`, `usb`). The
+  on-screen keyboard types on a US layout; see [Keyboard](touch-input.md#keyboard).
+- **umbriel touch and pen mapping** applies to every touchscreen and tablet while smon runs with
+  `-input`, and with several monitors only to SMON-1.
+- **H.265 and AV1** don't play in every browser; the viewer says so. Miracast and AirPlay are
+  H.264 only. AV1 needs `rtpav1pay` (gst-plugins-rs), and with the software encoder (aom)
+  adaptive bitrate is off. smon doesn't use `svtav1enc`: it buffers 16 frames by default, and
+  its low-delay mode stalls (SVT-AV1 4.2).
+- **The installable viewer** needs the device to trust smon's certificate authority; see
+  [HTTPS](receivers.md#https-and-the-certificate).
+- **Rotating** the tablet doesn't rotate its monitor; `-portrait` (or a new monitor with
+  `-monitors`) picks the orientation when the monitor is created.

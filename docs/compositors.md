@@ -2,22 +2,23 @@
 
 smon needs two things from a compositor: a way to create a virtual output, and an
 xdg-desktop-portal ScreenCast implementation to capture it. The portal part is the same
-everywhere. The output, placement and touch mapping are what each backend implements.
+everywhere. The output, placement, scale and input mapping are what each backend implements.
 
-| | umbriel | Hyprland | Sway | KDE Plasma |
-| --- | --- | --- | --- | --- |
-| Detected by | `umbriel` on `PATH` | `$HYPRLAND_INSTANCE_SIGNATURE` set | `$SWAYSOCK` set | `$KDE_FULL_SESSION=true` or `KDE` in `$XDG_CURRENT_DESKTOP` |
-| Virtual output | `umbriel output-create` | `hyprctl output create headless` | `swaymsg create_output` | The portal (ScreenCast `VIRTUAL` source) |
-| Output name | `SMON-1` | `SMON-1` | `HEADLESS-<n>` | `Virtual-…` |
-| Size | `-w`/`-h`/`-fps` | `-w`/`-h`/`-fps` | `-w`/`-h`/`-fps` | Chosen in the portal dialog (6.8+), else 1920x1080 at 60 Hz |
-| Default placement | Saved display layout | `auto-right` | Sway's default | KWin's default |
-| Share picker | umbriel share picker | hyprland-share-picker | xdg-desktop-portal-wlr chooser | Plasma's share dialog |
-| Touch mapping | All touchscreens | Only smon's touchscreen (with a fallback) | Only smon's touchscreen | Only smon's touchscreen |
+| | umbriel | Hyprland | Sway | KDE Plasma | GNOME |
+| --- | --- | --- | --- | --- | --- |
+| Detected by | `umbriel` on `PATH` | `$HYPRLAND_INSTANCE_SIGNATURE` set | `$SWAYSOCK` set | `$KDE_FULL_SESSION=true` or `KDE` in `$XDG_CURRENT_DESKTOP` | `GNOME` in `$XDG_CURRENT_DESKTOP` |
+| Virtual output | `umbriel output-create` | `hyprctl output create headless` | `swaymsg create_output` | The portal (ScreenCast `VIRTUAL` source) | The portal (ScreenCast `VIRTUAL` source) |
+| Output name | `SMON-<n>` | `SMON-<n>` | `HEADLESS-<n>` | `Virtual-…` | `Meta-<n>` |
+| Size | `-w`/`-h`/`-fps` | `-w`/`-h`/`-fps` | `-w`/`-h`/`-fps` | Chosen in the portal dialog (6.8+), else 1920x1080 at 60 Hz | `-w`/`-h` |
+| `-scale` | `output.<name>.scale` | Monitor rule | `output … scale` | `kscreen-doctor` | Mutter DisplayConfig (nearest supported scale) |
+| Default placement | Saved display layout | `auto-right` | Sway's default | KWin's default | Mutter's default |
+| Share picker | umbriel share picker | hyprland-share-picker | xdg-desktop-portal-wlr chooser | Plasma's share dialog | GNOME's share dialog |
+| Touch and pen mapping | All touchscreens / tablets | Only smon's devices (with a fallback) | Only smon's devices | Only smon's devices | Only smon's devices |
 
-Every feature works on all four, with the differences listed here.
+Every feature works on all five, with the differences listed here.
 
-> **Note:** the Sway and KDE Plasma backends were written from the compositors' sources and are
-> covered by unit tests, but have not been run on real sessions yet. Reports are welcome.
+> **Note:** the Sway, KDE Plasma and GNOME backends were written from the compositors' sources
+> and are covered by unit tests, but have not been run on real sessions yet. Reports are welcome.
 
 ## umbriel
 
@@ -42,11 +43,17 @@ applies. On exit, smon removes any override it set.
 The first run of each mode opens the umbriel share picker. In extend mode pick **SMON-1**; in
 mirror mode pick the screen to duplicate. See [The share picker](usage.md#the-share-picker).
 
+### Scale on umbriel
+
+`-scale` sets the runtime override `output.SMON-<n>.scale`, removed on exit.
+
 ### Touch input on umbriel
 
-smon maps its touchscreen with the runtime setting `input.touch.map_to_output`, removed on exit.
-That umbriel setting covers **every** touchscreen, so a built-in touch panel also maps to the
-shared screen while smon runs.
+smon maps its touchscreen with the runtime setting `input.touch.map_to_output`, and its pen with
+`input.tablet.map_to_output`, both removed on exit. Those umbriel settings cover **every**
+touchscreen and tablet, so a built-in touch panel also maps to the shared screen while smon
+runs. For the same reason, with [several monitors](usage.md#several-monitors) touch and pen work
+on SMON-1 only.
 
 ## Hyprland
 
@@ -160,6 +167,37 @@ the screen to duplicate.
 
 `-input` maps only smon's touchscreen, through KWin's input-device D-Bus interface
 (`outputName`). KWin saves that mapping in `~/.config/kcminputrc`. smon removes its entry on exit.
+
+## GNOME
+
+Requires GNOME Shell (Mutter) with `xdg-desktop-portal-gnome`, and `gsettings` (glib2) for
+touch and pen mapping. smon talks to Mutter's `org.gnome.Mutter.DisplayConfig` D-Bus interface.
+
+### Virtual output on GNOME
+
+As on KDE Plasma, smon asks the ScreenCast portal for a **virtual** source and the portal makes
+the monitor (`Meta-<n>`); it goes away when smon closes the portal session. Mutter sizes a
+virtual monitor from the video format the reader asks for, so smon requests `-w`x`-h` in the
+capture and the monitor takes that size.
+
+### Placement and scale on GNOME
+
+With `-pos` or `-scale`, smon applies a **temporary** monitor configuration through
+DisplayConfig: the current layout, with the new monitor moved and scaled. Temporary means
+Mutter never saves it to `monitors.xml`. Mutter accepts only the scales a mode supports, so
+smon picks the nearest one. You can also arrange the monitor in *Settings → Displays*.
+
+### Share picker on GNOME
+
+The first run of extend mode shows GNOME's share dialog: choose the virtual monitor. Allow it
+to remember the choice so later runs skip the dialog.
+
+### Touch input on GNOME
+
+`-input` sets the `output` key of the `org.gnome.desktop.peripherals.touchscreen` (and, for
+the pen, `org.gnome.desktop.peripherals.tablet`) settings at the path of smon's own device ids
+(`1209:5340`, `1209:5341`; later monitors have their own), naming the virtual monitor. The
+settings apply only to smon's devices, and smon resets them on exit.
 
 ## Other compositors
 

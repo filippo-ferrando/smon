@@ -12,12 +12,12 @@ capture (encoding, streaming, audio, input) is shared by every backend.
 ```text
                 ┌──────────────────────────┐
                 │  Wayland compositor      │  internal/compositor
-                │  (umbriel, Hyprland, …)  │  creates the output, places it, maps touch
+                │  (umbriel, Hyprland, …)  │  creates outputs, places and scales them, maps input
                 └────────────┬─────────────┘
                              │ xdg-desktop-portal ScreenCast → PipeWire
                 ┌────────────▼─────────────┐
-                │  pipewiresrc → H.264     │  internal/display, internal/gst
-                │  (fastest encoder)       │  keyframes and bitrate on demand
+                │  pipewiresrc → H.264,    │  internal/display, internal/gst
+                │  H.265 or AV1 (fastest)  │  keyframes and bitrate on demand
                 └────────────┬─────────────┘
          ┌───────────────────┼──────────────────────┬─────────────────┐
          ▼                   ▼                      ▼                 ▼
@@ -26,18 +26,21 @@ capture (encoding, streaming, audio, input) is shared by every backend.
    internal/web        internal/web          internal/cast        internal/cast
 
    "Second Monitor (smon)" sink → pulsesrc → Opus / AAC        internal/audio
-   viewer touches → /dev/uinput touchscreen                    internal/touch
+   viewer touches, pen, keys → /dev/uinput devices             internal/touch
 ```
 
-1. In extend mode the compositor backend creates the virtual output **SMON-1**.
+1. In extend mode the compositor backend creates the virtual output **SMON-1** (with
+   `-monitors`, one more per viewer, on demand).
 2. smon opens a ScreenCast session through xdg-desktop-portal and receives a PipeWire stream
    of that output (or of the mirrored screen).
-3. An in-process GStreamer pipeline encodes it to H.264 with the fastest available encoder.
+3. An in-process GStreamer pipeline encodes it (H.264, H.265 or AV1, from `-codec`) with the
+   fastest available encoder for that codec.
 4. The access units fan out to every connected viewer through the transport for its receiver.
 5. Audio is captured from smon's own sound output and encoded to Opus (browser, USB) or AAC
    (Miracast).
-6. With `-input`, viewer touch events are injected into a virtual uinput touchscreen that the
-   compositor maps to the shared output.
+6. With `-input`, viewer touch and pen events are injected into a virtual uinput touchscreen
+   and pen tablet that the compositor maps to the shared output; with `-keyboard`, key events
+   into a virtual keyboard.
 
 On exit, everything is undone in reverse order.
 
@@ -46,15 +49,15 @@ On exit, everything is undone in reverse order.
 | Path | What it holds |
 | --- | --- |
 | `cmd/smon` | Command line: flag parsing and wiring |
-| `internal/compositor` | Virtual output, placement and touch mapping on umbriel, Hyprland, Sway and KDE Plasma |
-| `internal/display` | Portal screencast of SMON-1 or a mirrored screen, and its encoder pipeline |
-| `internal/gst` | In-process GStreamer pipelines, encoder selection, keyframe and bitrate control |
-| `internal/h264` | Annex-B access units from RTP |
-| `internal/web` | WebRTC and WebSocket viewers, the viewer page, adaptive bitrate, `smon usb` |
+| `internal/compositor` | Virtual output, placement, scale and input mapping on umbriel, Hyprland, Sway, KDE Plasma and GNOME |
+| `internal/display` | Portal screencast of one monitor (SMON-n) or a mirrored screen, and its encoder pipeline |
+| `internal/gst` | In-process GStreamer pipelines, the codec table, encoder selection, keyframe and bitrate control |
+| `internal/rtpau` | Access units from RTP: H.264 and H.265 as Annex-B, AV1 as OBUs (for WebCodecs) |
+| `internal/web` | WebRTC and WebSocket viewers, the viewer page (installable, with stats), the monitor allocator, adaptive bitrate, HTTPS, QR code, `smon usb` |
 | `internal/cast` | Miracast (WFD RTSP), AirPlay, webOS, receiver discovery |
 | `internal/cast/playfair` | FairPlay handshake for AirPlay, vendored from UxPlay (C, via cgo) |
 | `internal/audio` | The *Second Monitor (smon)* sound output and its capture |
-| `internal/touch` | Virtual uinput touchscreen |
+| `internal/touch` | Virtual uinput touchscreen, pen tablet and keyboard |
 | `internal/config` | Per-user state directory |
 
 ## Adding a compositor
@@ -69,27 +72,36 @@ ScreenCast interface, so the compositor needs:
   touch; without it, smon matches the stream's `position` against `Outputs`; `source_type` and
   `size` are read too),
 - a way to create and destroy a virtual (headless) output at runtime, or a portal that creates
-  one itself (ScreenCast source type `VIRTUAL`, as on KDE Plasma; see `PortalOutput` below),
-- ideally, a way to position outputs and to map a touchscreen to an output at runtime.
+  one itself (ScreenCast source type `VIRTUAL`, as on KDE Plasma and GNOME; see `PortalOutput`
+  below),
+- ideally, a way to position and scale outputs, and to map a touchscreen or pen tablet to an
+  output, at runtime.
 
 ### The interface
 
 ```go
 // internal/compositor/compositor.go
+type OutputSpec struct {
+	Name      string // where smon names outputs (umbriel, Hyprland); "" is OutputName
+	W, H, FPS int
+	Pos       string  // "", right, left, above or below
+	Scale     float64 // 0 or 1: not scaled
+}
+
 type Compositor interface {
 	Name() string
 	// CreateOutput adds the virtual output (removing a stale one from a crash
-	// first), places it, and returns its name: pos is "" (compositor default)
-	// or right|left|above|below. It returns "" when the ScreenCast portal
-	// creates the output instead (see PortalOutput).
-	CreateOutput(w, h, fps int, pos string) (string, error)
+	// first), places and scales it, and returns its name. It returns "" when
+	// the ScreenCast portal creates the output instead (see PortalOutput).
+	CreateOutput(spec OutputSpec) (string, error)
 	DestroyOutput(name string)
 	// WatchLayout runs until done is closed; a no-op where it does not apply.
-	WatchLayout(done chan struct{})
-	// MapTouch maps smon's virtual touchscreen, which already exists, to an
-	// output; UnmapTouch undoes it after the touchscreen is gone.
-	MapTouch(output string) error
-	UnmapTouch()
+	WatchLayout(name string, done chan struct{})
+	// MapInput maps one of smon's virtual input devices (touchscreen or pen),
+	// which already exists, to an output; UnmapInput undoes it after the
+	// device is gone.
+	MapInput(dev touch.Device, output string) error
+	UnmapInput(dev touch.Device)
 	Outputs() ([]Output, error)
 }
 
@@ -97,20 +109,26 @@ type Compositor interface {
 // by the ScreenCast portal (source type VIRTUAL) rather than by CreateOutput,
 // and removed when the portal session closes.
 type PortalOutput interface {
-	PlaceOutput(name, pos string, w, h int) error
+	PlaceOutput(name string, spec OutputSpec) error
+}
+
+// CapsSizedOutput: the portal-made output takes the size smon asks for in the
+// capture caps (Mutter), rather than one chosen in the share dialog.
+type CapsSizedOutput interface {
+	CapsSized() bool
 }
 ```
 
 | Method | Called | Expected behavior |
 | --- | --- | --- |
 | `Name` | At startup | Lowercase backend name, as used by `-compositor`. |
-| `CreateOutput` | Extend mode, before the screencast starts | Remove a stale output from a crashed run, create a `w`x`h`@`fps` output, place it, and return its name (`SMON-1` where the compositor lets smon choose). With `pos == ""`, use the compositor's default placement. Backends implementing `PortalOutput` return `""`. |
-| `DestroyOutput` | On exit (extend mode) | Remove the output and any placement override. Must not fail loudly. |
+| `CreateOutput` | Extend mode, before the screencast starts, once per monitor | Remove a stale output from a crashed run (only outputs of a previous run: with `-monitors` several are live at once), create a `W`x`H`@`FPS` output named `spec.Name` where the compositor lets smon choose, scale it, place it, and return its name. With `Pos == ""`, use the compositor's default placement. Backends implementing `PortalOutput` return `""`. |
+| `DestroyOutput` | When the monitor closes (extend mode) | Remove the output and any placement or scale override. Must not fail loudly. |
 | `WatchLayout` | In a goroutine, extend mode | Optional. React to the user rearranging displays (umbriel uses it to drop its `-pos` override). Return when `done` closes. |
-| `MapTouch` | With `-input`, right after the touchscreen is created | Map smon's uinput device, named `smon touchscreen` (Hyprland calls it `smon-touchscreen`), (or all touchscreens, if that is all the compositor offers) to `output`. |
-| `UnmapTouch` | On exit | Restore the previous mapping. |
+| `MapInput` | With `-input`, right after each device is created | Map smon's uinput device `dev` to `output`. `dev` has the name, vendor and product ids (`smon touchscreen`, `smon pen`; ` <n>` after the name and their own product id for monitor n), and says whether it is a pen. `Sway()` and `Hyprland()` spell the name the way those compositors do. Map all touchscreens or tablets only if that is all the compositor offers. |
+| `UnmapInput` | When the monitor closes | Restore the previous mapping. |
 | `Outputs` | During placement, and to name the captured output when the portal sends no `mapping_id` | Outputs with position and **logical** size (after scale and rotation). |
-| `PlaceOutput` (`PortalOutput` only) | Once the portal reports the output it created | Place it according to `pos`; a no-op for `""`. |
+| `PlaceOutput` (`PortalOutput` only) | Once the portal reports the output it created | Scale it, and place it according to `spec.Pos`. `spec` has the size the portal made. |
 
 The `placeXY` helper turns a `-pos` value and the result of `Outputs` into coordinates, so most
 backends only need to call it from `CreateOutput`.
@@ -119,7 +137,8 @@ backends only need to call it from `CreateOutput`.
 
 1. Add `internal/compositor/<name>.go` with a type implementing `Compositor`. Use
    `umbriel.go` (a CLI with runtime config keys), `hyprland.go` or `sway.go` (an IPC tool
-   with JSON output), or `kde.go` (portal-made output, D-Bus touch mapping) as a template.
+   with JSON output), or `kde.go` / `gnome.go` (portal-made output, D-Bus placement and input
+   mapping) as a template.
 2. Register it in `Detect` in `compositor.go`: accept it in the `-compositor` switch, and add
    automatic detection, preferably from an environment variable the compositor sets for its
    clients (like `HYPRLAND_INSTANCE_SIGNATURE`).
@@ -136,8 +155,27 @@ backends only need to call it from `CreateOutput`.
 
 - **Runtime only.** Never write to the user's config files. Every change must be undone on exit.
 - **Clean up after crashes.** `CreateOutput` must cope with a leftover output from a previous
-  run that was killed (Sway, whose names change, keeps the last one in `~/.config/smon/sway-output`).
+  run that was killed (Sway, whose names change, lists them in `~/.config/smon/sway-output`).
 - **Logical coordinates.** `Outputs` reports sizes after scale and transform, since that is the
   space placement works in.
 - **Least surprise for touch.** Map only smon's device when the compositor allows it, so built-in
   touch panels keep working.
+- **Several monitors.** Key every runtime override by output name, never assume one output.
+
+## Adding a codec
+
+Codecs are rows of the table in `internal/gst/codec.go`: VA-API encoder suffix, software
+encoders, caps, parser and RTP payloader. `encoderChain` in `internal/gst/encoder.go` needs the
+software encoder's low-latency settings, and `bitrateProps`/`LiveBitrate` say how adaptive
+bitrate drives it. The web side needs the WebRTC MIME type and SDP name in
+`internal/web/codec.go`, a depacketizer in `internal/rtpau` for USB viewers, and the WebCodecs
+codec string in the viewer page's `codecFor`.
+
+## Several monitors
+
+`internal/web/alloc.go` decides which monitor a viewer gets. The page sends `POST /claim` with
+a client id it keeps in `localStorage`, the monitor it asks for (`?m=`) and its orientation;
+the allocator answers with the one the client already holds, the one it asked for, a free one,
+or a new one (made through `Options.NewMonitor`, which `cmd/smon` builds on `display.New`), up
+to `-monitors`. The page then sends its WebRTC offer for that monitor. Connections are counted
+per client; monitors after the first close once nobody has held them for 30 seconds.

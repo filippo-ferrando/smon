@@ -26,6 +26,30 @@ Other compositors are [not supported yet](architecture.md#adding-a-compositor).
 The page loads over TCP, but WebRTC media also needs **UDP** on the same port. Open the
 `-addr` port for both TCP and UDP. See [Firewall](receivers.md#firewall).
 
+### "Your connection is not private" / certificate warning
+
+That is smon's own certificate, made on your computer. Accept it to continue, or install
+smon's certificate authority on the device once so the warning goes away for good (and the
+viewer can be installed as an app). See [HTTPS](receivers.md#https-and-the-certificate).
+`-tls=false` serves plain HTTP instead, without the warning but also without keeping the
+screen awake and app install.
+
+### "this link is no longer valid"
+
+The access token changed (`-new-token`, or `~/.config/smon/token` was deleted). Open the new
+URL smon prints, and install the app again if you had installed it.
+
+### "this browser can't receive H.265 (or AV1) video"
+
+The browser can't decode the codec smon was started with. Run smon with `-codec h264`, which
+plays everywhere, or use another browser. See [Codecs](usage.md#codecs).
+
+### "all N monitors are in use"
+
+Every monitor allowed by `-monitors` has a device on it. Add `&m=1` to the URL to watch
+monitor 1, start smon with a higher `-monitors`, or wait: a monitor whose device left is free
+again after 30 seconds.
+
 ### No sound on the receiver
 
 1. Tap the page once (press OK on a TV remote). Browsers keep pages silent until then.
@@ -82,4 +106,6 @@ To pair again, delete `~/.config/smon/webos-<ip>.key`.
 ### SMON-1 is still there after a crash
 
 The next run of smon removes a stale SMON-1 before creating a new one. To remove it by hand,
-use `umbriel output-destroy SMON-1` or `hyprctl output remove SMON-1`.
+use `umbriel output-destroy SMON-1` or `hyprctl output remove SMON-1` (and the same for SMON-2
+and up with `-monitors`). On Sway, the next run removes every output listed in
+`~/.config/smon/sway-output`.
