@@ -3,7 +3,6 @@ package gst
 import (
 	"fmt"
 	"net"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -122,11 +121,11 @@ func testEncoderControl(t *testing.T, c *Codec, enc string) {
 	if low > high*6/10 {
 		t.Errorf("bitrate did not drop: %d -> %d bytes/2s", high, low)
 	}
-	// VA-API encoders restart the sequence on a rate change (one IDR,
-	// measured on Mesa radeonsi); x264 reconfigures in place. rateCtl
+	// VA-API encoders and x265 restart the sequence on a rate change (one
+	// IDR, measured on Mesa radeonsi); x264 reconfigures in place. rateCtl
 	// steps rarely for that reason.
 	want := 1
-	if !strings.HasPrefix(enc, "va") {
+	if enc == "x264enc" {
 		want = 0
 	}
 	if keysAtChange+keysAfter > want {
