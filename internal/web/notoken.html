@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Second Monitor</title>
+<style>
+  :root { color-scheme: dark; }
+  body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: #000; color: #eee;
+    font: 16px/1.5 system-ui, sans-serif; }
+  main { max-width: 30em; padding: 24px 16px; }
+  h1 { font-size: 1.3em; margin: 0 0 .5em; }
+  form { display: flex; gap: 8px; margin-top: 1em; }
+  input { flex: 1; min-width: 0; padding: 10px; border-radius: 8px; border: 1px solid #555; background: #111; color: #eee; font: inherit; }
+  button { padding: 10px 16px; border-radius: 8px; border: 0; background: #2d6cdf; color: #fff; font: inherit; }
+  code { background: #222; padding: 1px 4px; border-radius: 4px; }
+</style>
+<main>
+  <h1>This link is missing its access token</h1>
+  <p>smon only shows the screen to links that carry its token: the part after <code>?t=</code> in the URL
+    it prints. Your browser may have dropped it when you continued past the certificate warning.</p>
+  <p>Scan the QR code again, or open the full URL smon printed. Once the page has loaded with the token,
+    this browser remembers it. You can also paste the token here:</p>
+  <form onsubmit="event.preventDefault(); location.href = '/?t=' + encodeURIComponent(document.getElementById('t').value.trim().replace(/^.*[?&]t=/, ''));">
+    <input id="t" placeholder="token or full URL" autocomplete="off" autocapitalize="off" spellcheck="false">
+    <button>Open</button>
+  </form>
+</main>
+</html>

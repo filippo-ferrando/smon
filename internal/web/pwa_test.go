@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"image/png"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -68,5 +69,50 @@ func TestRenderPageToken(t *testing.T) {
 	p := string(renderPage(pageFlags{input: true}, "abc"))
 	if strings.Contains(p, "{{TOKEN}}") || !strings.Contains(p, "manifest.webmanifest?t=abc") || !strings.Contains(p, `data-input="1"`) {
 		t.Fatal("page not rendered")
+	}
+}
+
+// The token is kept in a cookie once the page loads with it, so the bare
+// address works after a browser drops ?t=; without either, a help page.
+func TestTokenCookie(t *testing.T) {
+	s := &webServer{token: "0123456789abcdef0123456789abcdef", page: []byte("viewer")}
+	srv := httptest.NewServer(s.routes())
+	defer srv.Close()
+
+	res, err := http.Get(srv.URL + "/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(res.Body)
+	res.Body.Close()
+	if res.StatusCode != http.StatusForbidden || !strings.Contains(string(body), "missing its access token") {
+		t.Fatalf("no token: %d %.60s", res.StatusCode, body)
+	}
+
+	res, err = http.Get(srv.URL + "/?t=" + s.token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res.Body.Close()
+	var cookie *http.Cookie
+	for _, c := range res.Cookies() {
+		if c.Name == tokenCookie {
+			cookie = c
+		}
+	}
+	if cookie == nil || cookie.Value != s.token || !cookie.HttpOnly {
+		t.Fatalf("cookie %+v", cookie)
+	}
+
+	req, _ := http.NewRequest("GET", srv.URL+"/", nil)
+	req.AddCookie(cookie)
+	res, err = http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ = io.ReadAll(res.Body)
+	res.Body.Close()
+	if res.StatusCode != http.StatusOK || string(body) != "viewer" {
+		t.Fatalf("with the cookie: %d %s", res.StatusCode, body)
 	}
 }

@@ -46,6 +46,9 @@ const wsWriteTimeout = 5 * time.Second
 //go:embed index.html
 var indexHTML []byte
 
+//go:embed notoken.html
+var noTokenHTML []byte
+
 // Options configures Serve.
 type Options struct {
 	Touch    *touch.Touch                       // viewer touches drive this; nil: no touch
@@ -213,15 +216,48 @@ func (s *webServer) routes() *http.ServeMux {
 	return mux
 }
 
+// tokenCookie keeps the access token in the browser once a page with it in
+// the URL has loaded, so the bare address works too: some browsers drop the
+// ?t= part when you continue past the certificate warning.
+const tokenCookie = "smon_t"
+
+// hasToken reports whether r carries the access token, in the URL or the
+// cookie.
+func (s *webServer) hasToken(r *http.Request) bool {
+	ok := func(t string) bool { return subtle.ConstantTimeCompare([]byte(t), []byte(s.token)) == 1 }
+	if ok(r.URL.Query().Get("t")) {
+		return true
+	}
+	c, err := r.Cookie(tokenCookie)
+	return err == nil && ok(c.Value)
+}
+
 // authed rejects requests without the access token printed in the URL.
 func (s *webServer) authed(h http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if subtle.ConstantTimeCompare([]byte(r.URL.Query().Get("t")), []byte(s.token)) != 1 {
+		if !s.hasToken(r) {
+			if r.URL.Path == "/" {
+				s.handleNoToken(w, r)
+				return
+			}
 			http.Error(w, "forbidden", http.StatusForbidden)
 			return
 		}
 		h(w, r)
 	}
+}
+
+// handleNoToken explains a viewer page opened without the token, instead of
+// a bare "forbidden", and lets the token be typed in.
+func (s *webServer) handleNoToken(w http.ResponseWriter, r *http.Request) {
+	reason := "without the access token"
+	if r.URL.Query().Get("t") != "" {
+		reason = "with an old or wrong access token"
+	}
+	log.Printf("viewer page opened from %s %s (the URL was %q)", clientIP(r), reason, r.URL.RequestURI())
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(http.StatusForbidden)
+	_, _ = w.Write(noTokenHTML)
 }
 
 // handleCA serves smon's CA certificate in the DER form Android and iOS
@@ -252,6 +288,10 @@ func printURLs(scheme string, ips []string, port int, token string, opts Options
 
 func (s *webServer) handleIndex(w http.ResponseWriter, r *http.Request) {
 	log.Printf("viewer page opened from %s (%s)", clientIP(r), r.UserAgent())
+	http.SetCookie(w, &http.Cookie{
+		Name: tokenCookie, Value: s.token, Path: "/", MaxAge: 365 * 24 * 3600,
+		HttpOnly: true, Secure: s.caDER != nil, SameSite: http.SameSiteStrictMode,
+	})
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_, _ = w.Write(s.page)
 }
