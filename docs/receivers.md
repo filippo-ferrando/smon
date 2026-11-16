@@ -43,7 +43,8 @@ only vouch for local addresses and names (private IP ranges, `localhost`, `.loca
 `home.arpa` and this machine's name), never for a public site.
 
 - **Without further setup**, the browser warns about the certificate the first time. Accept
-  it and the page works, including keeping the screen awake.
+  it and the page works. Browsers should also keep the screen awake then, but some refuse
+  that (and app install) until the certificate is really trusted.
 - **To trust smon for good**, open `https://<address>:<port>/ca.crt` on the device (smon prints
   the link) and install it:
   - **Android:** *Settings → Security → Encryption & credentials → Install a certificate → CA
@@ -52,7 +53,9 @@ only vouch for local addresses and names (private IP ranges, `localhost`, `.loca
     *Settings → General → VPN & Device Management*, then turn it on in *Settings → General →
     About → Certificate Trust Settings*.
 
-  The warning is then gone for good, and the page can be installed as an app. When your LAN
+  The warning is then gone for good, and the page can be installed as an app. (This is how
+  browsers treat a locally installed authority; it has not yet been checked on every
+  browser, so reports are welcome.) When your LAN
   address changes, smon issues a new server certificate from the same authority, so devices
   stay trusted.
 
@@ -61,8 +64,9 @@ and a TV browser can't accept a certificate warning.
 
 ## Installing the viewer as an app
 
-Once the device trusts smon's certificate, the browser offers to install the viewer (an
-install button appears in the button bar on Chrome; on iOS use *Share → Add to Home Screen*).
+Once the device trusts smon's certificate, the browser should offer to install the viewer (an
+install button appears in the button bar when Chrome offers it; on iOS use *Share → Add to Home
+Screen*). If the page can't register its offline helper, it shows a hint about the certificate.
 The app opens fullscreen, keeps the screen awake, and when smon is not running it waits on a
 "reconnecting…" screen instead of an error page. Its link carries the saved token; after
 `-new-token`, install it again from the new URL.

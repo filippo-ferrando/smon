@@ -190,8 +190,9 @@ type webServer struct {
 	newMonitor   func(n int, portrait bool) (*display.Display, *touch.Touch, *touch.Pen, error)
 	closeMonitor func(*display.Display)
 
-	mu   sync.Mutex
-	mons map[int]*monitor
+	mu       sync.Mutex
+	mons     map[int]*monitor
+	creating sync.Mutex // held while a monitor is made
 }
 
 func (s *webServer) routes() *http.ServeMux {

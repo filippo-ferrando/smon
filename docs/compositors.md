@@ -178,7 +178,9 @@ touch and pen mapping. smon talks to Mutter's `org.gnome.Mutter.DisplayConfig` D
 As on KDE Plasma, smon asks the ScreenCast portal for a **virtual** source and the portal makes
 the monitor (`Meta-<n>`); it goes away when smon closes the portal session. Mutter sizes a
 virtual monitor from the video format the reader asks for, so smon requests `-w`x`-h` in the
-capture and the monitor takes that size.
+capture and the monitor takes that size. Because the monitor may only appear once the stream
+runs, smon names, places, scales and maps input to it then, waiting up to 10 seconds for it to
+show up in the display layout.
 
 ### Placement and scale on GNOME
 

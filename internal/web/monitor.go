@@ -51,7 +51,7 @@ func startMonitor(d *display.Display, n, kbps int, vc videoCodec, in *inputs) (*
 	}
 	m.peer.stats = &statsSource{
 		encoder: pipe.Encoder, codec: vc.name, size: fmt.Sprintf("%dx%d", d.W, d.H),
-		fps: d.FPS, kbps: kbps, abr: m.peer.abr, mon: d.Output(),
+		fps: d.FPS, kbps: kbps, abr: m.peer.abr, mon: d.Output,
 	}
 	go forwardVideo(udp, video, m.hub, vc.asm)
 	return m, nil
@@ -88,6 +88,10 @@ func (s *webServer) createMonitor(n int, portrait bool) error {
 	if s.newMonitor == nil {
 		return errors.New("this smon serves one monitor")
 	}
+	// One at a time: one share dialog on the desktop, and backends that find
+	// the new output by what appeared since must not see two appear.
+	s.creating.Lock()
+	defer s.creating.Unlock()
 	log.Printf("creating monitor %d for a new viewer", n)
 	d, tch, pen, err := s.newMonitor(n, portrait)
 	if err != nil {

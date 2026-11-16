@@ -92,6 +92,9 @@ async function claim() {
   const text = await res.text();
   if (res.status === 403) throw new Fatal('this link is no longer valid (smon -new-token?): open the new URL smon prints');
   if (res.status === 404 || res.status === 409) throw new Fatal(text.trim());
+  // Making the monitor failed (the share dialog was cancelled?): retrying
+  // would pop the dialog up again and again, so leave it to the user.
+  if (res.status === 500) throw new Fatal(text.trim() + ' — reload the page to try again');
   if (!res.ok) throw new Error(text.trim());
   return JSON.parse(text).m;
 }

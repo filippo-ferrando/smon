@@ -10,6 +10,8 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"slices"
+	"sync"
 	"time"
 
 	"smon/internal/compositor"
@@ -24,23 +26,25 @@ import (
 // Display is a portal screencast of either a new virtual output (extend) or
 // an existing one (mirror).
 type Display struct {
-	N         int // smon's monitor number, 1 for the first
-	W, H, FPS int
-	Codec     *gst.Codec // what Pipeline encodes; nil is H.264
-	virtual   bool
-	comp      compositor.Compositor
-	want      string                // extend: the virtual output's name ("" until the portal names it)
-	portalOut bool                  // extend: the portal creates the output (compositor.PortalOutput)
-	spec      compositor.OutputSpec // extend: what was asked for, for a portal-made output
-	before    []compositor.Output   // extend, portal-made: the outputs before it existed
-	output    string                // captured output name (the virtual one, or the mirrored screen)
-	touch     *touch.Touch          // virtual touchscreen, if input is enabled
-	pen       *touch.Pen            // virtual pen tablet, if input is enabled
-	cleanup   []func()              // extra teardown, run by Close
-	done      chan struct{}         // stops the layout watcher
-	node      uint32
-	fd        *os.File
-	conn      *dbus.Conn
+	N          int // smon's monitor number, 1 for the first
+	W, H, FPS  int
+	Codec      *gst.Codec // what Pipeline encodes; nil is H.264
+	virtual    bool
+	comp       compositor.Compositor
+	want       string                // extend: the virtual output's name ("" until the portal names it)
+	portalOut  bool                  // extend: the portal creates the output (compositor.PortalOutput)
+	spec       compositor.OutputSpec // extend: what was asked for, for a portal-made output
+	before     []compositor.Output   // extend, portal-made: the outputs before it existed
+	output     string                // captured output name (the virtual one, or the mirrored screen)
+	touch      *touch.Touch          // virtual touchscreen, if input is enabled
+	pen        *touch.Pen            // virtual pen tablet, if input is enabled
+	cleanup    []func()              // extra teardown, run by Close
+	outMu      sync.Mutex            // output and want, once settle may set them
+	settleOnce sync.Once
+	done       chan struct{} // stops the layout watcher
+	node       uint32
+	fd         *os.File
+	conn       *dbus.Conn
 }
 
 // New starts a screencast. mode "extend" creates a virtual output next to the
@@ -131,8 +135,90 @@ func (d *Display) Close() {
 }
 
 // Output is the name of the captured output ("" when the portal did not
-// say).
-func (d *Display) Output() string { return d.output }
+// say, or not yet).
+func (d *Display) Output() string {
+	d.outMu.Lock()
+	defer d.outMu.Unlock()
+	return d.output
+}
+
+// inputLater creates the touchscreen and pen for a monitor that does not
+// exist yet (GNOME): settle maps them once it does.
+func (d *Display) inputLater() (*touch.Touch, *touch.Pen, error) {
+	t, err := touch.New(touch.TouchDevice.For(d.N), d.W, d.H)
+	if err != nil {
+		return nil, nil, err
+	}
+	d.touch = t
+	if p, err := touch.NewPen(touch.PenDevice.For(d.N), d.W, d.H); err == nil {
+		d.pen = p
+	} else {
+		log.Printf("pen input off: %v", err)
+	}
+	fmt.Fprintln(os.Stderr, "smon: touch input enabled once the virtual monitor appears")
+	return d.touch, d.pen, nil
+}
+
+// settleTimeout is how long settle waits for a caps-sized monitor to appear.
+const settleTimeout = 10 * time.Second
+
+// settle finishes setting up a caps-sized monitor (GNOME) once the stream
+// runs: finds its name if the portal did not give it, places and scales it,
+// and maps the input devices to it.
+func (d *Display) settle() {
+	deadline := time.Now().Add(settleTimeout)
+	name := d.Output()
+	for {
+		if outs, err := d.comp.Outputs(); err == nil {
+			if name == "" {
+				name = newSince(d.before, outs)
+			}
+			if name != "" && slices.ContainsFunc(outs, func(o compositor.Output) bool { return o.Name == name }) {
+				break
+			}
+		}
+		if time.Now().After(deadline) {
+			fmt.Fprintln(os.Stderr, "smon: the virtual monitor did not show up in the display layout: -pos, -scale and -input will not work")
+			return
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
+	d.outMu.Lock()
+	d.want, d.output = name, name
+	d.outMu.Unlock()
+	fmt.Fprintf(os.Stderr, "smon: streaming %s (%dx%d)\n", name, d.W, d.H)
+	if p, ok := d.comp.(compositor.PortalOutput); ok {
+		spec := d.spec
+		spec.W, spec.H = d.W, d.H
+		if err := p.PlaceOutput(name, spec); err != nil {
+			fmt.Fprintf(os.Stderr, "smon: placing %s: %v\n", name, err)
+		}
+	}
+	if d.touch != nil {
+		if err := d.comp.MapInput(touch.TouchDevice.For(d.N), name); err != nil {
+			log.Printf("touch input: %v", err)
+		}
+	}
+	if d.pen != nil {
+		if err := d.comp.MapInput(touch.PenDevice.For(d.N), name); err != nil {
+			log.Printf("pen input: %v", err)
+		}
+	}
+}
+
+// newSince returns the first enabled output in outs that is not in before.
+func newSince(before, outs []compositor.Output) string {
+	seen := make(map[string]bool, len(before))
+	for _, o := range before {
+		seen[o.Name] = true
+	}
+	for _, o := range outs {
+		if !seen[o.Name] && o.Enabled {
+			return o.Name
+		}
+	}
+	return ""
+}
 
 // AtClose registers f to run when the display closes (also on Ctrl-C), in
 // reverse order of registration.
@@ -143,6 +229,9 @@ func (d *Display) AtClose(f func()) { d.cleanup = append(d.cleanup, f) }
 // into them land on that output. The pen is optional: if it cannot be
 // mapped, touch still works and pen is nil.
 func (d *Display) EnableTouch() (*touch.Touch, *touch.Pen, error) {
+	if d.output == "" && d.capsSized() {
+		return d.inputLater()
+	}
 	if d.output == "" {
 		return nil, nil, errors.New("touch input: the portal did not say which output is shared")
 	}
@@ -218,6 +307,12 @@ func (d *Display) checkSource(mode string, props map[string]dbus.Variant) error 
 		d.output = name
 		return nil
 	}
+	if d.capsSized() {
+		// Mutter makes the monitor once the stream's format is agreed, so it
+		// may not exist yet: settle names, places and maps it then.
+		d.want, d.output = name, name
+		return nil
+	}
 	if d.portalOut {
 		d.want, d.output = name, name
 		if name == "" {
@@ -271,16 +366,7 @@ func (d *Display) findOutput(props map[string]dbus.Variant) string {
 		return ""
 	}
 	if d.portalOut {
-		seen := make(map[string]bool, len(d.before))
-		for _, o := range d.before {
-			seen[o.Name] = true
-		}
-		for _, o := range outs {
-			if !seen[o.Name] && o.Enabled {
-				return o.Name
-			}
-		}
-		return ""
+		return newSince(d.before, outs)
 	}
 	pos, ok := propPair(props, "position")
 	if !ok {
@@ -324,6 +410,9 @@ func (d *Display) Pipeline(kbps, w, h, fps, gop int, tail string) (*gst.Pipeline
 		return nil, err
 	}
 	g.Encoder = encName
+	if d.capsSized() {
+		d.settleOnce.Do(func() { go d.settle() })
+	}
 	started := time.Now()
 	go func() {
 		if err := g.Wait(); err != nil && time.Since(started) < encoderTrial {

@@ -2,6 +2,7 @@ package touch
 
 import (
 	"os"
+	"os/exec"
 	"strings"
 	"testing"
 	"time"
@@ -34,9 +35,44 @@ func TestDevicesAppear(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, d := range []Device{TouchDevice, PenDevice, KeyboardDevice} {
-		if !strings.Contains(string(b), `N: Name="`+d.Name+`"`) {
-			t.Errorf("%s not listed", d.Name)
+	// udev must class each device the way compositors (libinput) need: the
+	// pen mapping only applies to a tablet.
+	for _, c := range []struct {
+		dev  Device
+		prop string
+	}{
+		{TouchDevice, "ID_INPUT_TOUCHSCREEN=1"},
+		{PenDevice, "ID_INPUT_TABLET=1"},
+		{KeyboardDevice, "ID_INPUT_KEYBOARD=1"},
+	} {
+		node := eventNode(string(b), c.dev.Name)
+		if node == "" {
+			t.Errorf("%s not listed", c.dev.Name)
+			continue
+		}
+		out, err := exec.Command("udevadm", "info", "--query=property", "--name=/dev/input/"+node).Output()
+		if err != nil {
+			t.Logf("udevadm: %v (skipping the class check)", err)
+			continue
+		}
+		if !strings.Contains(string(out), c.prop) {
+			t.Errorf("%s (%s): udev lacks %s:\n%s", c.dev.Name, node, c.prop, out)
 		}
 	}
+}
+
+// eventNode finds the evdev node (event<n>) of the device called name in
+// /proc/bus/input/devices.
+func eventNode(devices, name string) string {
+	for block := range strings.SplitSeq(devices, "\n\n") {
+		if !strings.Contains(block, `N: Name="`+name+`"`) {
+			continue
+		}
+		for _, f := range strings.Fields(strings.ReplaceAll(block, "Handlers=", "Handlers= ")) {
+			if strings.HasPrefix(f, "event") {
+				return f
+			}
+		}
+	}
+	return ""
 }

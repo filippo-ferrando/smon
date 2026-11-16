@@ -2,6 +2,7 @@ package display
 
 import (
 	"fmt"
+	"sync"
 	"testing"
 
 	"smon/internal/compositor"
@@ -129,5 +130,52 @@ func TestCapsSizedKeepsRequestedSize(t *testing.T) {
 	}
 	if d.W != 1600 || d.H != 2560 || !d.capsSized() {
 		t.Fatalf("size %dx%d, capsSized %v", d.W, d.H, d.capsSized())
+	}
+}
+
+// growingComp is a GNOME-like compositor whose virtual monitor appears only
+// after a few polls, as Mutter makes it once the stream runs.
+type growingComp struct {
+	fakeCapsComp
+	mu    sync.Mutex
+	polls int
+}
+
+func (g *growingComp) Outputs() ([]compositor.Output, error) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.polls++
+	outs := []compositor.Output{out("DP-1", 0, 0)}
+	if g.polls > 2 {
+		outs = append(outs, out("Meta-0", 1920, 0))
+	}
+	return outs, nil
+}
+
+func (g *growingComp) PlaceOutput(name string, spec compositor.OutputSpec) error {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.placed = fmt.Sprintf("%s@%s", name, spec.Pos)
+	return nil
+}
+
+// Without mapping_id, the monitor is found, named and placed once it shows
+// up, after the stream started.
+func TestSettleCapsSized(t *testing.T) {
+	c := &growingComp{}
+	d := &Display{W: 1600, H: 2560, comp: c, portalOut: true, spec: compositor.OutputSpec{Pos: "right"}}
+	d.before, _ = c.Outputs()
+	props := map[string]dbus.Variant{"source_type": dbus.MakeVariant(uint32(4))}
+	if err := d.checkSource("extend", props); err != nil {
+		t.Fatal(err)
+	}
+	if d.Output() != "" {
+		t.Fatalf("named before the monitor exists: %q", d.Output())
+	}
+	d.settle()
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if d.Output() != "Meta-0" || c.placed != "Meta-0@right" {
+		t.Fatalf("output %q, placed %q", d.Output(), c.placed)
 	}
 }
