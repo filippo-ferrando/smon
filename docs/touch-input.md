@@ -79,7 +79,8 @@ as powerful as sitting at your computer: a viewer can open a terminal and run co
 
 - Use `-input` and `-keyboard` only on networks and with devices you trust, or over USB, where
   smon listens on 127.0.0.1 only.
-- The page is HTTPS by default, so the token and keystrokes don't cross the network in clear.
+- Over Wi-Fi, use `-tls` (after installing smon's certificate on the device) so the token and
+  keystrokes don't cross the network in clear.
 - Run `smon web -new-token` to lock out every device that had the old URL.
 
 ## Limits

@@ -281,7 +281,7 @@ func printURLs(scheme string, ips []string, port int, token string, opts Options
 		}
 	}
 	if scheme == "https" && len(ips) > 0 {
-		fmt.Printf("the browser warns about the certificate the first time; to trust it for good (and install the viewer as an app), open https://%s/ca.crt on the device and install it\n",
+		fmt.Printf("HTTPS: install smon's certificate on each device first, or the page may stay blank: open https://%s/ca.crt (accept the warning to download it), then install it in the device settings (see docs/receivers.md)\n",
 			net.JoinHostPort(ips[0], strconv.Itoa(port)))
 	}
 }

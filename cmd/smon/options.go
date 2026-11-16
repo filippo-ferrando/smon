@@ -62,7 +62,7 @@ func parseArgs(args []string) options {
 	fs.StringVar(&o.compositor, "compositor", "", "umbriel|hyprland|sway|kde|gnome (default: detected from the session)")
 	fs.StringVar(&o.codec, "codec", "h264", "h264|h265|av1: h265 and av1 need less bandwidth for the same quality, but not every browser decodes them (miracast and airplay: h264 only)")
 	fs.BoolVar(&o.audio, "audio", true, "add a \"Second Monitor (smon)\" sound output while streaming; what you play there reaches the receiver (not airplay)")
-	fs.BoolVar(&o.tls, "tls", true, "web: serve the viewer over HTTPS with smon's own certificate (needed for app install and keeping the screen awake)")
+	fs.BoolVar(&o.tls, "tls", false, "web: serve the viewer over HTTPS with smon's own certificate; install it on the device once (see the docs) for app install and keeping the screen awake")
 	fs.BoolVar(&o.qr, "qr", true, "web: also print the viewer URL as a QR code")
 	fs.BoolVar(&o.newToken, "new-token", false, "web/usb: replace the saved access token, so old URLs stop working")
 	_ = fs.Parse(args[1:]) // ExitOnError: never returns an error

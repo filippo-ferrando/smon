@@ -22,7 +22,7 @@ smon cast [flags] <target>  cast to a receiver from 'smon list', or webos:<tv-ip
 
 | Command | What it does |
 | --- | --- |
-| `smon web` | Serves the viewer page over HTTPS and prints a URL with an access token for each network interface, the first one also as a QR code. Open it in any browser on the LAN. |
+| `smon web` | Serves the viewer page and prints a URL with an access token for each network interface, the first one also as a QR code. Open it in any browser on the LAN. |
 | `smon usb` | Sets up `adb reverse` and opens the viewer page in the tablet's default browser. See [USB](receivers.md#usb-android). |
 | `smon list` | Lists AirPlay receivers (mDNS) and Miracast sinks (Wi-Fi P2P scan). |
 | `smon cast miracast:<name\|mac>` | Casts to a Miracast sink. See [Miracast](receivers.md#miracast). |
@@ -51,7 +51,7 @@ Flags go after the command, for example `smon web -input -fps 60`.
 | `-codec` | `h264` | all but `list` | `h264`, `h265` or `av1`. See [Codecs](#codecs). |
 | `-input` | `false` | `web`, `usb` | Viewer touches and pen strokes control the shared screen. See [Touch, pen and keyboard](touch-input.md). |
 | `-keyboard` | `false` | `web`, `usb` | Viewers can type into the desktop. See [Touch, pen and keyboard](touch-input.md#keyboard). |
-| `-tls` | `true` | `web` | Serve the viewer over HTTPS with smon's own certificate. See [HTTPS](receivers.md#https-and-the-certificate). |
+| `-tls` | `false` | `web` | Serve the viewer over HTTPS with smon's own certificate, for app install and keeping the screen awake. Install the certificate on the device first: see [HTTPS](receivers.md#https-and-the-certificate). |
 | `-qr` | `true` | `web` | Also print the viewer URL as a QR code (only on a terminal). |
 | `-new-token` | `false` | `web`, `usb` | Replace the saved access token, so links handed out before stop working. |
 | `-audio` | `true` | all but `list` | Add the *Second Monitor (smon)* sound output. `-audio=false` streams video only. See [Audio](audio.md). |

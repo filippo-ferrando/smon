@@ -26,8 +26,9 @@ You can drag windows onto it, play sound on it, and with `-input`, control it by
 - **Extend or mirror.** `extend` creates a new virtual output that behaves like any
   other monitor. `mirror` duplicates a screen you already have.
 - **Any browser is a receiver.** Low-latency video over WebRTC to any device on your LAN, with
-  no app to install: scan the QR code smon prints. The page is served over HTTPS and protected
-  by an access token, and it can be installed as a fullscreen app that reconnects on its own.
+  no app to install: scan the QR code smon prints. The page is protected by an access token and
+  reconnects on its own; with `-tls` it is served over HTTPS and can be installed as a
+  fullscreen app.
 - **Several monitors.** With `-monitors 3`, every tablet, phone or laptop that connects gets a
   monitor of its own, created on demand and removed when it leaves.
 - **High-DPI and portrait.** `-scale 2` keeps text readable on a sharp tablet, `-portrait`
@@ -66,7 +67,7 @@ smon picks the compositor automatically. Use `-compositor umbriel|hyprland|sway|
 
 | Receiver | Command | Transport | Codecs | Audio | Touch, pen, keyboard |
 | --- | --- | --- | --- | --- | --- |
-| Any browser on the LAN | `smon web` | WebRTC over HTTPS | H.264, H.265, AV1 | Opus | Yes |
+| Any browser on the LAN | `smon web` | WebRTC (HTTPS with `-tls`) | H.264, H.265, AV1 | Opus | Yes |
 | Android over USB | `smon usb` | WebSocket over `adb reverse` | H.264, H.265, AV1 | Opus | Yes |
 | Miracast sinks | `smon cast miracast:…` | Wi-Fi Direct, MPEG-TS/RTP | H.264 | AAC | No |
 | Open AirPlay receivers | `smon cast airplay:…` | AirPlay mirroring | H.264 | No | No |
@@ -96,8 +97,7 @@ make build
 ```
 
 smon prints a URL with an access token, and a QR code for it. Scan it or open the URL on the
-other device, and accept the certificate warning (or install smon's certificate once to make
-it go away; see [HTTPS](docs/receivers.md#https-and-the-certificate)). The first run shows
+other device. The first run shows
 your compositor's screen-share picker: pick **SMON-1** (on Sway, the new `HEADLESS-<n>`
 output; on KDE and GNOME, allow the new virtual display). smon saves that choice, so later
 runs skip the picker.
@@ -128,7 +128,7 @@ smon cast [flags] <target>  cast to miracast:<name|mac>, airplay:<name|host:port
 | `-codec h264\|h265\|av1` | `h264` | Video codec; H.265 and AV1 need less bandwidth |
 | `-input` | off | `web` and `usb` only: viewer touches and pen control the shared screen |
 | `-keyboard` | off | `web` and `usb` only: viewers can type into the desktop |
-| `-tls` | `true` | `web`: serve the viewer over HTTPS |
+| `-tls` | off | `web`: serve the viewer over HTTPS (install smon's certificate on the device first) |
 | `-new-token` | off | Replace the saved access token (old links stop working) |
 | `-audio` | `true` | Add the *Second Monitor (smon)* sound output |
 | `-compositor umbriel\|hyprland\|sway\|kde\|gnome` | detected | Force a compositor backend |

@@ -37,15 +37,17 @@ network. Video is H.264 (or [H.265 or AV1](usage.md#codecs)) over WebRTC and aud
 
 ## HTTPS and the certificate
 
-`smon web` serves the page over HTTPS (`-tls=false` turns that off). The certificate comes
-from a small certificate authority smon creates on first use, in `~/.config/smon/tls/`. It can
-only vouch for local addresses and names (private IP ranges, `localhost`, `.local`, `.lan`,
-`home.arpa` and this machine's name), never for a public site.
+By default `smon web` serves plain HTTP, which every browser opens straight from the QR code.
+`-tls` serves HTTPS instead, which browsers need for three things: installing the viewer as an
+app, keeping the screen awake, and keeping the token and keystrokes off the network in clear.
 
-- **Without further setup**, the browser warns about the certificate the first time. Accept
-  it and the page works. Browsers should also keep the screen awake then, but some refuse
-  that (and app install) until the certificate is really trusted.
-- **To trust smon for good**, open `https://<address>:<port>/ca.crt` on the device (smon prints
+The certificate comes from a small certificate authority smon creates on first use, in
+`~/.config/smon/tls/`. It can only vouch for local addresses and names (private IP ranges,
+`localhost`, `.local`, `.lan`, `home.arpa` and this machine's name), never for a public site.
+**Install it on each device once**: browsers only half-accept a certificate you click through
+the warning for. Some show the page and then block everything it does, so it stays blank.
+
+- **To trust smon**, open `https://<address>:<port>/ca.crt` on the device (smon prints
   the link) and install it:
   - **Android:** *Settings → Security → Encryption & credentials → Install a certificate → CA
     certificate*, then pick the downloaded `smon-ca.crt`. The menu path varies by vendor.

@@ -28,11 +28,10 @@ The page loads over TCP, but WebRTC media also needs **UDP** on the same port. O
 
 ### "Your connection is not private" / certificate warning
 
-That is smon's own certificate, made on your computer. Accept it to continue, or install
-smon's certificate authority on the device once so the warning goes away for good (and the
-viewer can be installed as an app). See [HTTPS](receivers.md#https-and-the-certificate).
-`-tls=false` serves plain HTTP instead, without the warning but also without keeping the
-screen awake and app install.
+You started smon with `-tls`, and the device doesn't trust smon's certificate yet. Clicking
+through the warning is not enough in many browsers: the page then stays blank. Install smon's
+certificate authority on the device once (see
+[HTTPS](receivers.md#https-and-the-certificate)), or run smon without `-tls`.
 
 ### "this link is no longer valid"
 
