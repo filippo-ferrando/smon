@@ -1,0 +1,85 @@
+# Maintainer: filippo-ferrando
+
+# Builds the latest commit of the smon repository. To build a local checkout instead
+# (it must be committed), run:
+#   SMON_REPO="file://$(git rev-parse --show-toplevel)" makepkg -si
+
+pkgname=smon
+pkgver=r0.0000000
+pkgrel=1
+pkgdesc='A wireless-first second monitor for Wayland compositors'
+arch=('x86_64' 'aarch64')
+url='https://git.fferrando.cc/rdfilippo/smon'
+license=('GPL-3.0-only')
+depends=(
+  'glibc'
+  'glib2'
+  # Screen capture and audio
+  'pipewire'
+  'wireplumber'
+  'pipewire-pulse'
+  'libpulse'                # pactl
+  # GStreamer pipeline
+  'gstreamer'               # also gst-launch-1.0, gst-inspect-1.0
+  'gst-plugins-base'        # opusenc
+  'gst-plugins-base-libs'   # videoconvert, videoscale, audioconvert
+  'gst-plugins-good'        # rtph264pay, rtph265pay, rtpopuspay, rtpmp2tpay, pulsesrc, aacparse, udpsink
+  'gst-plugins-bad-libs'    # h264parse, h265parse, av1parse, mpegtsmux
+  'gst-plugin-pipewire'     # pipewiresrc
+  'gst-plugin-va'           # vah264enc, vah265enc, vaav1enc (VA-API)
+  'gst-plugins-ugly'        # x264enc
+  'gst-libav'               # avenc_aac (Miracast audio)
+)
+makedepends=('git' 'go' 'gcc' 'pkgconf')
+optdepends=(
+  'intel-media-driver: VA-API hardware encoding on Intel GPUs'
+  'libva-mesa-driver: VA-API hardware encoding on AMD GPUs'
+  'gst-plugins-bad: x265enc and av1enc, software encoders for -codec h265 and -codec av1'
+  'gst-plugin-rsrtp: rtpav1pay, needed for -codec av1'
+  'android-tools: smon usb (adb)'
+  'networkmanager: Miracast'
+  'dnsmasq: Miracast when smon is the group owner'
+  'avahi: AirPlay receiver discovery'
+)
+source=("smon::git+${SMON_REPO:-https://git.fferrando.cc/rdfilippo/smon.git}"
+        '60-smon-uinput.rules')
+sha256sums=('SKIP'
+            '15445c0751d27a10832476aa7b323f2e7c881712157b2f55be1ed186d01775d5')
+
+pkgver() {
+  cd smon
+  printf 'r%s.%s' "$(git rev-list --count HEAD)" "$(git rev-parse --short=7 HEAD)"
+}
+
+prepare() {
+  cd smon
+  export GOPATH="$srcdir/gopath"
+  export GOFLAGS='-modcacherw'
+  go mod download
+}
+
+build() {
+  cd smon
+  export GOPATH="$srcdir/gopath"
+  export CGO_CPPFLAGS="$CPPFLAGS"
+  export CGO_CFLAGS="$CFLAGS"
+  export CGO_CXXFLAGS="$CXXFLAGS"
+  export CGO_LDFLAGS="$LDFLAGS"
+  export GOFLAGS='-buildmode=pie -trimpath -mod=readonly -modcacherw'
+  go build -ldflags "-linkmode=external" -o smon ./cmd/smon
+}
+
+check() {
+  cd smon
+  export GOPATH="$srcdir/gopath"
+  export GOFLAGS='-mod=readonly -modcacherw'
+  go test -short ./...
+}
+
+package() {
+  cd smon
+  install -Dm755 smon "$pkgdir/usr/bin/smon"
+  install -Dm644 "$srcdir/60-smon-uinput.rules" "$pkgdir/usr/lib/udev/rules.d/60-smon-uinput.rules"
+  install -Dm644 README.md "$pkgdir/usr/share/doc/smon/README.md"
+  install -Dm644 docs/*.md -t "$pkgdir/usr/share/doc/smon/docs/"
+}

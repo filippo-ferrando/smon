@@ -1,0 +1,3 @@
+# Lets the logged-in user create virtual input devices, which smon's -input and
+# -keyboard options need.
+KERNEL=="uinput", SUBSYSTEM=="misc", TAG+="uaccess", OPTIONS+="static_node=uinput"

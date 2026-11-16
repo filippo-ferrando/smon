@@ -73,26 +73,51 @@ func hyprOK(args ...string) error {
 func (h *hyprland) CreateOutput(spec OutputSpec) (string, error) {
 	name := spec.name()
 	_, _ = hyprctl("output", "remove", name) // stale output from a crash
+	// The rule first, so the output comes up at the right mode and place.
+	if err := h.rule(name, spec); err != nil {
+		return "", err
+	}
+	return name, hyprOK("output", "create", "headless", name)
+}
+
+// ResizeOutput implements ResizableOutput: a new rule for the output applies
+// at once. Without -pos the output stays where it is.
+func (h *hyprland) ResizeOutput(name string, spec OutputSpec) error {
+	if spec.Pos == "" {
+		outs, err := h.Outputs()
+		if err != nil {
+			return err
+		}
+		for _, o := range outs {
+			if o.Name == name {
+				return h.setMonitor(name, hyprMode(spec), fmt.Sprintf("%dx%d", o.Position.X, o.Position.Y), spec.scaleArg())
+			}
+		}
+	}
+	return h.rule(name, spec)
+}
+
+func hyprMode(spec OutputSpec) string { return fmt.Sprintf("%dx%d@%d", spec.W, spec.H, spec.FPS) }
+
+// rule sets the monitor rule for output name: spec's mode and scale, placed
+// by spec.Pos (Hyprland's auto-right without one).
+func (h *hyprland) rule(name string, spec OutputSpec) error {
 	where := "auto-right"
 	if spec.Pos != "" {
 		outs, err := h.Outputs()
 		if err != nil {
-			return "", err
+			return err
 		}
 		w, hh := spec.Logical()
 		x, y, ok, err := placeXY(outs, name, spec.Pos, w, hh)
 		if err != nil {
-			return "", err
+			return err
 		}
 		if ok {
 			where = fmt.Sprintf("%dx%d", x, y)
 		}
 	}
-	// The rule first, so the output comes up at the right mode and place.
-	if err := h.setMonitor(name, fmt.Sprintf("%dx%d@%d", spec.W, spec.H, spec.FPS), where, spec.scaleArg()); err != nil {
-		return "", err
-	}
-	return name, hyprOK("output", "create", "headless", name)
+	return h.setMonitor(name, hyprMode(spec), where, spec.scaleArg())
 }
 
 func (*hyprland) DestroyOutput(name string) { _, _ = hyprctl("output", "remove", name) }

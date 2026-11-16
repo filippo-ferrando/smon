@@ -60,5 +60,6 @@ WebRTC viewers adapt the bitrate:
   its low-delay mode stalls (SVT-AV1 4.2).
 - **The installable viewer** needs the device to trust smon's certificate authority; see
   [HTTPS](receivers.md#https-and-the-certificate).
-- **Rotating** the tablet doesn't rotate its monitor; `-portrait` (or a new monitor with
-  `-monitors`) picks the orientation when the monitor is created.
+- **Rotating** the tablet turns its monitor only on umbriel (and, untested, Hyprland and Sway), and only while
+  that tablet is the monitor's only viewer. On KDE Plasma and GNOME, `-portrait` (or a new
+  monitor with `-monitors`) picks the orientation when the monitor is created.

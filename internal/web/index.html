@@ -94,11 +94,28 @@ function unreachable() {
   return new Error('smon is not reachable');
 }
 const WANT = +new URLSearchParams(location.search).get('m') || 0;
+
+// --- orientation ---
+// The monitor turns with this device (smon -rotate): say which way the
+// screen is on connecting and whenever it turns. screen.orientation is the
+// device's own; the viewport also turns tall when an on-screen keyboard opens.
+function portraitNow() {
+  const t = screen.orientation && screen.orientation.type;
+  if (t) return t.startsWith('portrait');
+  if (typeof window.orientation === 'number') return Math.abs(window.orientation) !== 90; // older iOS
+  return innerHeight > innerWidth;
+}
+let orientSend = null, orientTimer;
+const sendOrient = () => orientSend && orientSend(JSON.stringify({ t: 'orient', portrait: portraitNow() }));
+// Wait for the turn to settle: a device put down flat can flip back and forth.
+const onTurn = () => { clearTimeout(orientTimer); orientTimer = setTimeout(sendOrient, 600); };
+if (screen.orientation) screen.orientation.addEventListener('change', onTurn);
+else window.addEventListener('orientationchange', onTurn);
 async function claim() {
   const slow = setTimeout(() => { msg.textContent = 'setting up your monitor… (if a share dialog shows on the computer, allow it)'; }, 1500);
   let res;
   try {
-    res = await fetch('/claim' + location.search, { method: 'POST', body: JSON.stringify({ cid: CID, m: WANT, portrait: innerHeight > innerWidth }) });
+    res = await fetch('/claim' + location.search, { method: 'POST', body: JSON.stringify({ cid: CID, m: WANT, portrait: portraitNow() }) });
   } catch (e) { throw unreachable(); }
   finally { clearTimeout(slow); }
   const text = await res.text();
@@ -117,8 +134,11 @@ async function startRTC() {
   const pc = new RTCPeerConnection();
   pc.addTransceiver('video', { direction: 'recvonly' });
   if (AUDIO) pc.addTransceiver('audio', { direction: 'recvonly' });
-  const ctl = pc.createDataChannel('ctl'); // smon's side of the stats
+  const ctl = pc.createDataChannel('ctl'); // smon's side of the stats; our orientation
   ctl.onmessage = e => onServerMsg(e.data);
+  const ctlSend = m => ctl.readyState === 'open' && ctl.send(m);
+  ctl.onopen = () => { orientSend = ctlSend; sendOrient(); };
+  ctl.onclose = () => { if (orientSend === ctlSend) orientSend = null; };
   rtcPC = pc;
   if (INPUT || KEYBOARD) {
     const dc = pc.createDataChannel('input');
@@ -178,7 +198,10 @@ function startWS() {
   const ws = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws${location.search}`);
   ws.binaryType = 'arraybuffer';
   let dec = null, ts = 0, waitKey = true, codecChecked = false;
-  ws.onopen = () => { if (INPUT || KEYBOARD) send = m => ws.readyState === 1 && ws.send(m); };
+  ws.onopen = () => {
+    if (INPUT || KEYBOARD) send = m => ws.readyState === 1 && ws.send(m);
+    orientSend = m => ws.readyState === 1 && ws.send(m); sendOrient();
+  };
   // The periodic keyframe is seconds apart: ask for one whenever decoding has to restart.
   const needKey = () => { if (!waitKey && ws.readyState === 1) ws.send('{"t":"key"}'); waitKey = true; };
   ws.onmessage = e => {
@@ -210,7 +233,7 @@ function startWS() {
     dec.decode(new EncodedVideoChunk({ type: key ? 'key' : 'delta', timestamp: ts += 33333, data: au }));
   };
   ws.onclose = () => {
-    send = null;
+    send = null; orientSend = null;
     try { dec && dec.close(); } catch {}
     retry(async () => startWS());
   };

@@ -112,6 +112,12 @@ type PortalOutput interface {
 	PlaceOutput(name string, spec OutputSpec) error
 }
 
+// ResizableOutput: the output CreateOutput made can change mode while it is
+// shared (the capture follows), so it turns with the viewer's device.
+type ResizableOutput interface {
+	ResizeOutput(name string, spec OutputSpec) error
+}
+
 // CapsSizedOutput: the portal-made output takes the size smon asks for in the
 // capture caps (Mutter), rather than one chosen in the share dialog.
 type CapsSizedOutput interface {
@@ -129,6 +135,7 @@ type CapsSizedOutput interface {
 | `UnmapInput` | When the monitor closes | Restore the previous mapping. |
 | `Outputs` | During placement, and to name the captured output when the portal sends no `mapping_id` | Outputs with position and **logical** size (after scale and rotation). |
 | `PlaceOutput` (`PortalOutput` only) | Once the portal reports the output it created | Scale it, and place it according to `spec.Pos`. `spec` has the size the portal made. |
+| `ResizeOutput` (`ResizableOutput` only) | When the viewer's device turns (`-rotate`) | Give the output `spec.W`x`spec.H` at `spec.FPS`, keep its scale, and place it again by `spec.Pos`. The running ScreenCast stream must follow the new size; smon restarts its encoder. A mode override must be undone by `DestroyOutput`, and by `CreateOutput` after a crash. |
 
 The `placeXY` helper turns a `-pos` value and the result of `Outputs` into coordinates, so most
 backends only need to call it from `CreateOutput`.
@@ -179,3 +186,13 @@ the allocator answers with the one the client already holds, the one it asked fo
 or a new one (made through `Options.NewMonitor`, which `cmd/smon` builds on `display.New`), up
 to `-monitors`. The page then sends its WebRTC offer for that monitor. Connections are counted
 per client; monitors after the first close once nobody has held them for 30 seconds.
+
+## Turning with the device
+
+The viewer page sends `{"t":"orient","portrait":…}` when it connects and whenever the device
+turns (from `screen.orientation`, which ignores the on-screen keyboard): on the `ctl` data
+channel over WebRTC, on the WebSocket over USB. When that viewer is the monitor's only one,
+`monitor.turn` (`internal/web/monitor.go`) stops the pipeline, calls `Display.Resize` (the
+compositor's `ResizeOutput`) and starts a new pipeline at the new size into the same UDP socket.
+Its RTP has a new SSRC and new random sequence numbers; `rtpSplice` renumbers them so each
+viewer's stream simply continues, starting with a keyframe of the new size.

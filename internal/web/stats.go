@@ -2,6 +2,7 @@ package web
 
 import (
 	"encoding/json"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -27,6 +28,7 @@ type streamStats struct {
 
 // statsSource builds the stats message for one stream.
 type statsSource struct {
+	mu                   sync.Mutex // encoder and size, which change when the monitor turns
 	encoder, codec, size string
 	mon                  func() string // the output's name, which GNOME learns late; nil: none
 	fps, kbps            int
@@ -34,7 +36,16 @@ type statsSource struct {
 	viewers              atomic.Int64
 }
 
+// setStream records a restarted pipeline's encoder and size.
+func (s *statsSource) setStream(encoder, size string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.encoder, s.size = encoder, size
+}
+
 func (s *statsSource) message() []byte {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	m := streamStats{T: "stats", Encoder: s.encoder, Codec: s.codec, Kbps: s.kbps, Max: s.kbps, Size: s.size, FPS: s.fps, Viewers: s.viewers.Load()}
 	if s.mon != nil {
 		m.Mon = s.mon()

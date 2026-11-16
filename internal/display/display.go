@@ -77,6 +77,7 @@ func New(comp compositor.Compositor, spec compositor.OutputSpec, mode string, n 
 			return nil, err
 		}
 		d.want = name
+		track(comp, name)
 		d.done = make(chan struct{})
 		go comp.WatchLayout(name, d.done)
 		hint = "smon: in the share picker choose " + name
@@ -128,9 +129,46 @@ func (d *Display) Close() {
 			close(d.done)
 			d.done = nil
 		}
-		if d.want != "" {
+		if d.want != "" && (d.portalOut || untrack(d.want)) {
 			d.comp.DestroyOutput(d.want)
 		}
+	}
+}
+
+// outputs are the virtual outputs CreateOutput made that are still there, so
+// DestroyOutputs can remove them even while their Display is not done
+// starting (the share picker is up) or not done closing.
+var outputs = struct {
+	sync.Mutex
+	m map[string]compositor.Compositor
+}{m: map[string]compositor.Compositor{}}
+
+func track(comp compositor.Compositor, name string) {
+	outputs.Lock()
+	defer outputs.Unlock()
+	outputs.m[name] = comp
+}
+
+// untrack reports whether name was still tracked, so whoever gets there
+// first removes the output, once.
+func untrack(name string) bool {
+	outputs.Lock()
+	defer outputs.Unlock()
+	_, ok := outputs.m[name]
+	delete(outputs.m, name)
+	return ok
+}
+
+// DestroyOutputs removes every virtual output smon made that is still there,
+// without stopping what captures it: the last resort before exiting when
+// Close is stuck, or a Display is not made yet.
+func DestroyOutputs() {
+	outputs.Lock()
+	m := outputs.m
+	outputs.m = map[string]compositor.Compositor{}
+	outputs.Unlock()
+	for name, comp := range m {
+		comp.DestroyOutput(name)
 	}
 }
 
@@ -440,12 +478,43 @@ func (d *Display) RTP(kbps, mtu, gop int) (*net.UDPConn, *gst.Pipeline, error) {
 		return nil, nil, err
 	}
 	_ = udp.SetReadBuffer(4 << 20) // best effort: the kernel caps it
-	tail := fmt.Sprintf("%s ! udpsink host=127.0.0.1 port=%d sync=false",
-		d.codec().Payloader(96, mtu), udp.LocalAddr().(*net.UDPAddr).Port)
-	g, err := d.Pipeline(kbps, d.W, d.H, d.FPS, gop, tail)
+	g, err := d.RTPTo(udp, kbps, mtu, gop)
 	if err != nil {
 		udp.Close()
 		return nil, nil, err
 	}
 	return udp, g, nil
+}
+
+// RTPTo streams the display as RTP to udp, a socket RTP made: a new pipeline
+// for the same viewers, after Resize. Each pipeline's RTP has its own SSRC.
+func (d *Display) RTPTo(udp *net.UDPConn, kbps, mtu, gop int) (*gst.Pipeline, error) {
+	tail := fmt.Sprintf("%s ! udpsink host=127.0.0.1 port=%d sync=false",
+		d.codec().Payloader(96, mtu), udp.LocalAddr().(*net.UDPAddr).Port)
+	return d.Pipeline(kbps, d.W, d.H, d.FPS, gop, tail)
+}
+
+// CanResize reports whether Resize works here: a virtual output smon made,
+// on a compositor that can change its mode while it is shared.
+func (d *Display) CanResize() bool {
+	_, ok := d.comp.(compositor.ResizableOutput)
+	return ok && d.virtual && !d.portalOut && d.want != ""
+}
+
+// Resize gives the virtual output w x h pixels, at the same scale and
+// placement (to turn it between landscape and portrait). The running capture
+// follows; a pipeline started after it encodes the new size. The input
+// devices stay as they are: they report positions relative to the output.
+// Not safe to call while another goroutine starts a pipeline.
+func (d *Display) Resize(w, h int) error {
+	if !d.CanResize() {
+		return errors.New("this monitor can't change size while it runs")
+	}
+	spec := d.spec
+	spec.W, spec.H = w, h
+	if err := d.comp.(compositor.ResizableOutput).ResizeOutput(d.want, spec); err != nil {
+		return err
+	}
+	d.spec, d.W, d.H = spec, w, h
+	return nil
 }

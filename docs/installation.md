@@ -60,8 +60,8 @@ sudo pacman -S --needed android-tools             # smon usb
 sudo pacman -S --needed networkmanager dnsmasq    # Miracast
 sudo pacman -S --needed avahi                     # AirPlay discovery
 sudo systemctl enable --now avahi-daemon.service
-sudo pacman -S --needed x265                      # -codec h265 in software (VA-API needs nothing more)
-sudo pacman -S --needed aom gst-plugin-rsrtp      # -codec av1: aom encoder, rtpav1pay
+sudo pacman -S --needed gst-plugins-bad          # -codec h265/av1 in software: x265enc, av1enc (VA-API needs nothing more)
+sudo pacman -S --needed gst-plugin-rsrtp         # -codec av1: rtpav1pay
 ```
 
 **What each GStreamer package provides**
@@ -71,10 +71,12 @@ sudo pacman -S --needed aom gst-plugin-rsrtp      # -codec av1: aom encoder, rtp
 | `gst-plugin-pipewire` | `pipewiresrc` (screen capture) |
 | `gst-plugin-va` | `vah264enc`, `vah265enc`, `vaav1enc` where the GPU has them (hardware encoders; need a VA-API driver such as `intel-media-driver` or `libva-mesa-driver`) |
 | `gst-plugins-ugly` | `x264enc` (software encoder; often the fastest, see [Performance](limitations.md#encoder-selection)) |
-| `gst-plugins-bad-libs` | `h264parse`, `h265parse`, `av1parse`, `x265enc`, `av1enc`, `mpegtsmux` |
+| `gst-plugins-bad-libs` | `h264parse`, `h265parse`, `av1parse`, `mpegtsmux` |
+| `gst-plugins-bad` | `x265enc`, `av1enc` (software encoders, only for `-codec h265` and `-codec av1`; pulls in `x265` and `aom`) |
 | `gst-plugin-rsrtp` | `rtpav1pay` (only for `-codec av1`) |
 | `gst-plugins-good` | `rtph264pay`, `rtph265pay`, `rtpmp2tpay`, `rtpopuspay`, `pulsesrc`, `aacparse`, `udpsink` |
-| `gst-plugins-base` | `opusenc`, `videoconvert`, `videoscale`, `audioconvert` |
+| `gst-plugins-base` | `opusenc` |
+| `gst-plugins-base-libs` | `videoconvert`, `videoscale`, `audioconvert` (installed with `gst-plugins-base`) |
 | `gst-libav` | `avenc_aac` (Miracast audio) |
 | `libpulse` | `pactl` |
 

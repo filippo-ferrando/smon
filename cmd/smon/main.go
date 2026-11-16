@@ -9,7 +9,9 @@ import (
 	"os/signal"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
+	"time"
 
 	"smon/internal/audio"
 	"smon/internal/cast"
@@ -21,6 +23,7 @@ import (
 )
 
 func main() {
+	closeOnSignal() // before any output exists: Ctrl-C at the share picker too
 	o := parseArgs(os.Args[1:])
 	if o.cmd == "list" {
 		if err := cast.List(); err != nil {
@@ -67,7 +70,6 @@ func main() {
 		snd.Bind(d)
 	}
 	open.add(d)
-	closeOnSignal()
 
 	var (
 		tch *touch.Touch
@@ -88,7 +90,7 @@ func main() {
 		d.AtClose(kbd.Close)
 		log.Print("keyboard input enabled: viewers can type into the desktop")
 	}
-	opts := web.Options{Touch: tch, Pen: pen, Keyboard: kbd, Audio: snd, TLS: o.tls, QR: o.qr, NewToken: o.newToken}
+	opts := web.Options{Touch: tch, Pen: pen, Keyboard: kbd, Audio: snd, Rotate: o.rotate && o.mode == "extend", TLS: o.tls, QR: o.qr, NewToken: o.newToken}
 	if o.monitors > 1 {
 		opts.Monitors = o.monitors
 		opts.NewMonitor = func(n int, portrait bool) (*display.Display, *touch.Touch, *touch.Pen, error) {
@@ -104,7 +106,10 @@ func main() {
 	default:
 		err = cast.Cast(d, o.target, o.kbps, o.addr, snd)
 	}
-	open.close(d)
+	shutdown() // waits for a Ctrl-C's teardown, if one is running
+	if signaled.Load() {
+		select {} // the Ctrl-C stopped the stream: not an error; the handler exits
+	}
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -182,13 +187,52 @@ func newAudio(o options) *audio.Audio {
 	return audio.New(!strings.HasPrefix(o.target, "miracast:"))
 }
 
-// closeOnSignal removes the virtual outputs on Ctrl-C or SIGTERM, then exits.
+// signals are Ctrl-C, SIGTERM and SIGHUP; the second one stops waiting for
+// the monitors to close.
+var (
+	signals  = make(chan os.Signal, 2)
+	signaled atomic.Bool
+)
+
+// closeOnSignal removes the virtual outputs on Ctrl-C, SIGTERM or SIGHUP
+// (closing the terminal, unless run under nohup), then exits.
 func closeOnSignal() {
-	c := make(chan os.Signal, 1)
-	signal.Notify(c, os.Interrupt, syscall.SIGTERM)
+	sigs := []os.Signal{os.Interrupt, syscall.SIGTERM}
+	if !signal.Ignored(syscall.SIGHUP) {
+		sigs = append(sigs, syscall.SIGHUP)
+	}
+	signal.Notify(signals, sigs...)
 	go func() {
-		<-c
-		open.closeAll()
+		<-signals
+		signaled.Store(true)
+		shutdown()
 		os.Exit(0)
 	}()
 }
+
+var shutdownOnce sync.Once
+
+// shutdown closes every monitor, once: whoever comes second (main, when the
+// stream ends because of the Ctrl-C, or the signal) waits for it, so the
+// process cannot exit halfway. If closing hangs (the capture does not stop)
+// it gives up after closeTimeout or a second Ctrl-C, and removes the virtual
+// outputs anyway.
+func shutdown() {
+	shutdownOnce.Do(func() {
+		done := make(chan struct{})
+		go func() {
+			open.closeAll()
+			close(done)
+		}()
+		select {
+		case <-done:
+		case <-signals:
+			log.Print("removing the virtual monitors without waiting")
+		case <-time.After(closeTimeout):
+			log.Print("closing is stuck; removing the virtual monitors anyway")
+		}
+		display.DestroyOutputs() // also any whose share picker is still up
+	})
+}
+
+const closeTimeout = 5 * time.Second

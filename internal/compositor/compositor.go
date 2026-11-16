@@ -87,6 +87,16 @@ type PortalOutput interface {
 	PlaceOutput(name string, spec OutputSpec) error
 }
 
+// ResizableOutput is implemented by compositors that can change the size of
+// an output CreateOutput made while it is being shared, so it can turn
+// between landscape and portrait with the device showing it. The capture
+// follows the new size.
+type ResizableOutput interface {
+	// ResizeOutput gives output name the mode spec.W x spec.H at spec.FPS,
+	// and places it again by spec.Pos (its logical size changed).
+	ResizeOutput(name string, spec OutputSpec) error
+}
+
 // CapsSizedOutput is implemented by portal-made outputs that take their size
 // from the video format the consumer negotiates (Mutter's virtual monitors):
 // smon then asks for -w x -h in the capture caps.

@@ -23,6 +23,7 @@ type options struct {
 	monitors                 int
 	scale                    float64
 	portrait                 bool
+	rotate                   bool
 
 	pos        string
 	mode       string
@@ -54,6 +55,7 @@ func parseArgs(args []string) options {
 	fs.Float64Var(&o.scale, "scale", 1, "extend: output scale; 2 makes everything twice as big, for a high-DPI tablet")
 	fs.IntVar(&o.monitors, "monitors", 1, "web, extend: up to this many monitors, one per device that connects (1: every device shows the same monitor)")
 	fs.BoolVar(&o.portrait, "portrait", false, "extend: portrait monitor (swaps -w and -h), for a tablet held upright")
+	fs.BoolVar(&o.rotate, "rotate", true, "web/usb, extend: the monitor turns between landscape and portrait with the device showing it (umbriel; Hyprland and Sway untested)")
 	fs.StringVar(&o.pos, "pos", "", "extend: initial placement right|left|above|below (default: umbriel's saved display layout, the compositor's own placement elsewhere; on umbriel rearranging in the displays plugin always wins)")
 	fs.StringVar(&o.mode, "mode", "extend", "extend: new virtual monitor; mirror: duplicate an existing screen")
 	fs.StringVar(&o.addr, "addr", ":8080", "web/webos: listen address (TCP and UDP); usb: only the port is used")

@@ -47,6 +47,7 @@ Flags go after the command, for example `smon web -input -fps 60`.
 | `-addr` | `:8080` | `web`, `usb`, `cast webos:` | Listen address, TCP and UDP. `usb` uses only the port and always listens on 127.0.0.1. |
 | `-scale` | `1` | extend | Output scale: `2` makes everything twice as big, for a high-DPI tablet. See [Scale and portrait](#scale-and-portrait). |
 | `-portrait` | `false` | extend | Portrait monitor: swaps `-w` and `-h`. |
+| `-rotate` | `true` | `web`, `usb`, extend | The monitor turns between landscape and portrait with the device showing it. See [Scale and portrait](#scale-and-portrait). |
 | `-monitors` | `1` | `web`, extend | Up to this many monitors, one per device that connects. See [Several monitors](#several-monitors). |
 | `-codec` | `h264` | all but `list` | `h264`, `h265` or `av1`. See [Codecs](#codecs). |
 | `-input` | `false` | `web`, `usb` | Viewer touches and pen strokes control the shared screen. See [Touch, pen and keyboard](touch-input.md). |
@@ -118,9 +119,20 @@ smon web -w 2560 -h 1600 -scale 2
 ```
 
 `-portrait` makes the monitor upright by swapping `-w` and `-h`, for a tablet held vertically.
-It is a real portrait mode, not a rotation, so touch and pen land where expected. Rotating the
-tablet while connected does not rotate the monitor; restart smon (or, with
-[several monitors](#several-monitors), reconnect) to switch.
+It is a real portrait mode, not a rotation, so touch and pen land where expected.
+
+Turn the tablet or phone while it is connected and the monitor turns with it: smon swaps the
+output's width and height, the desktop lays itself out again, and the picture comes back at
+the new size a moment later, with the viewer still connected. The device's orientation counts
+when it connects too, so a phone held upright makes monitor 1 portrait.
+
+- It works on umbriel. Hyprland and Sway can resize smon's output while it runs too, so it
+  should work there, but it is untested on hardware. On KDE Plasma and GNOME the monitor keeps
+  the orientation it was made with, and smon logs that it can't turn it.
+- With `-pos`, the monitor is placed again at its new size, unless you have rearranged the
+  displays since (umbriel); without it, it stays where it is.
+- A monitor that several devices show at once stays as it is, so they don't fight over it.
+- `-rotate=false` keeps every monitor the way it started.
 
 ## Several monitors
 
@@ -133,7 +145,8 @@ smon web -monitors 3 -input
 
 - The first device gets SMON-1, made when smon starts. The next gets SMON-2, and so on (on
   Sway and KDE, the compositor names them).
-- A new monitor follows the device's orientation: a phone held upright gets a portrait monitor.
+- A new monitor follows the device's orientation: a phone held upright gets a portrait monitor,
+  and it [turns](#scale-and-portrait) when the phone does.
 - The browser keeps an id, so a device that reloads or reconnects within 30 seconds gets its
   own monitor back. A monitor other than the first closes 30 seconds after its device leaves.
 - When all N are in use, another device gets an error. Add `&m=1` to the URL to watch

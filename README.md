@@ -31,8 +31,9 @@ You can drag windows onto it, play sound on it, and with `-input`, control it by
   fullscreen app.
 - **Several monitors.** With `-monitors 3`, every tablet, phone or laptop that connects gets a
   monitor of its own, created on demand and removed when it leaves.
-- **High-DPI and portrait.** `-scale 2` keeps text readable on a sharp tablet, `-portrait`
-  makes an upright monitor, and extra monitors follow the device's orientation.
+- **High-DPI and portrait.** `-scale 2` keeps text readable on a sharp tablet, and the monitor
+  turns between landscape and portrait with the tablet or phone showing it (umbriel; Hyprland
+  and Sway untested). `-portrait` starts it upright.
 - **Native casting.** Miracast over Wi-Fi Direct, open AirPlay receivers (UxPlay, RPiPlay), and
   LG webOS TVs.
 - **USB fallback.** No Wi-Fi? `smon usb` streams to an Android tablet over `adb`.
@@ -124,6 +125,7 @@ smon cast [flags] <target>  cast to miracast:<name|mac>, airplay:<name|host:port
 | `-addr` | `:8080` | Listen address, TCP and UDP (`usb` uses only the port) |
 | `-scale` | `1` | Output scale, for example `2` on a high-DPI tablet |
 | `-portrait` | off | Upright monitor (swaps `-w` and `-h`) |
+| `-rotate` | on | `web` and `usb`: the monitor turns with the device showing it |
 | `-monitors` | `1` | `web` only: up to this many monitors, one per device that connects |
 | `-codec h264\|h265\|av1` | `h264` | Video codec; H.265 and AV1 need less bandwidth |
 | `-input` | off | `web` and `usb` only: viewer touches and pen control the shared screen |

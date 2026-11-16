@@ -64,6 +64,10 @@ type Options struct {
 	NewMonitor   func(n int, portrait bool) (*display.Display, *touch.Touch, *touch.Pen, error)
 	CloseMonitor func(*display.Display)
 
+	// Rotate turns a monitor between landscape and portrait with the screen
+	// of the device showing it, where the compositor can resize it live.
+	Rotate bool
+
 	TLS      bool // serve HTTPS with smon's own certificate (see tls.go)
 	QR       bool // print the viewer URL as a QR code too, on a terminal
 	NewToken bool // replace the saved access token with a new one
@@ -93,6 +97,7 @@ func Serve(d *display.Display, addr string, kbps int, opts Options) error {
 		token: token, codec: vc, kbps: kbps, kbd: opts.Keyboard,
 		mons:       map[int]*monitor{1: first},
 		newMonitor: opts.NewMonitor, closeMonitor: opts.CloseMonitor,
+		rotate: opts.Rotate,
 	}
 	if s.closeMonitor == nil {
 		s.closeMonitor = (*display.Display).Close
@@ -158,7 +163,7 @@ func Serve(d *display.Display, addr string, kbps int, opts Options) error {
 			}
 		}()
 	}
-	go func() { errc <- fmt.Errorf("gstreamer exited: %v", first.pipe.Wait()) }()
+	go func() { errc <- fmt.Errorf("gstreamer exited: %v", first.wait()) }()
 	return <-errc
 }
 
@@ -181,14 +186,15 @@ func (s *webServer) closeAll() {
 
 // webServer holds what the HTTP handlers share for one Serve run.
 type webServer struct {
-	token string
-	caDER []byte // smon's CA certificate, served at /ca.crt; nil without TLS
-	page  []byte
-	codec videoCodec // what the video tracks carry
-	kbps  int
-	audio webrtc.TrackLocal                                 // shared by every monitor; nil: no sound
-	kbd   *touch.Keyboard                                   // shared: keys go to the focused window
-	newPC func() (*webrtc.PeerConnection, *bweProbe, error) // set before serving
+	token  string
+	caDER  []byte // smon's CA certificate, served at /ca.crt; nil without TLS
+	page   []byte
+	codec  videoCodec // what the video tracks carry
+	kbps   int
+	rotate bool                                              // monitors follow their viewer's orientation (Options.Rotate)
+	audio  webrtc.TrackLocal                                 // shared by every monitor; nil: no sound
+	kbd    *touch.Keyboard                                   // shared: keys go to the focused window
+	newPC  func() (*webrtc.PeerConnection, *bweProbe, error) // set before serving
 
 	alloc        *allocator
 	newMonitor   func(n int, portrait bool) (*display.Display, *touch.Touch, *touch.Pen, error)
@@ -318,6 +324,7 @@ func (s *webServer) handleOffer(w http.ResponseWriter, r *http.Request) {
 	hooks := m.peer
 	hooks.join = func() { s.alloc.join(n, cid) }
 	hooks.leave = func() { s.alloc.leave(n, cid) }
+	hooks.orient = func(portrait bool) { s.orient(n, cid, portrait) }
 	answer, err := answerOffer(s.newPC, m.tracks(s.audio), offer, m.input, hooks)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -363,6 +370,8 @@ func (s *webServer) handleWS(w http.ResponseWriter, r *http.Request) {
 			}
 			if bytes.Equal(msg, wsKeyRequest) { // the client's decoder lost sync
 				m.peer.keyframe()
+			} else if portrait, ok := parseOrient(msg); ok {
+				s.orient(1, cid, portrait)
 			} else if m.input.enabled() {
 				m.input.handle(owner, msg)
 			}
@@ -435,11 +444,16 @@ func forwardAudio(udp *net.UDPConn, track *webrtc.TrackLocalStaticRTP, hub *auHu
 // WebSocket viewer it only forwards packets: no access units to assemble.
 func forwardVideo(udp *net.UDPConn, track *webrtc.TrackLocalStaticRTP, hub *auHub, codec rtpau.Codec) {
 	asm := rtpau.Assembler{Codec: codec, Head: 1} // room for the flags byte
+	var splice rtpSplice
 	buf := make([]byte, 1500)
 	for {
 		n, err := udp.Read(buf)
 		if err != nil {
 			return
+		}
+		if splice.fix(buf[:n], time.Now()) { // a new pipeline (the monitor turned)
+			asm = rtpau.Assembler{Codec: codec, Head: 1} // drop the old one's unfinished access unit
+			hub.lost()                                   // WebSocket viewers wait for the new keyframe
 		}
 		_, _ = track.Write(buf[:n])
 		if hub.empty() {
@@ -507,7 +521,8 @@ type peerHooks struct {
 	abr      *rateCtl     // nil: fixed bitrate
 	stats    *statsSource // nil: no stats for the viewer
 
-	join, leave func() // the viewer connected, and went away; nil: no-op
+	join, leave func()              // the viewer connected, and went away; nil: no-op
+	orient      func(portrait bool) // the viewer's screen turned (or connected); nil: ignored
 }
 
 // answerOffer creates a peer connection for one viewer, sending tracks, and
@@ -532,8 +547,17 @@ func answerOffer(newPC func() (*webrtc.PeerConnection, *bweProbe, error), tracks
 	owner := int(viewers.Add(1))
 	pc.OnDataChannel(func(dc *webrtc.DataChannel) {
 		switch {
-		case dc.Label() == "ctl" && hooks.stats != nil:
-			dc.OnOpen(func() { go sendStats(dc, hooks.stats) })
+		case dc.Label() == "ctl": // stats out, orientation in
+			if hooks.stats != nil {
+				dc.OnOpen(func() { go sendStats(dc, hooks.stats) })
+			}
+			if hooks.orient != nil {
+				dc.OnMessage(func(m webrtc.DataChannelMessage) {
+					if portrait, ok := parseOrient(m.Data); ok {
+						hooks.orient(portrait)
+					}
+				})
+			}
 		case dc.Label() == "input" && in.enabled(): // without -input/-keyboard the channel is never read
 			dc.OnMessage(func(m webrtc.DataChannelMessage) { in.handle(owner, m.Data) })
 			dc.OnClose(func() { in.release(owner) })

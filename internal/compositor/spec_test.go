@@ -50,3 +50,23 @@ func TestPlaceScaled(t *testing.T) {
 		t.Fatalf("placeXY = %d,%d %v %v", x, y, ok, err)
 	}
 }
+
+// A turned output keeps its scale and is placed again by its new logical
+// size: a 2x portrait tablet right of a 1920-wide screen.
+func TestResizeCommands(t *testing.T) {
+	var o Output
+	o.Name, o.Enabled = "DP-1", true
+	o.Logical.Width, o.Logical.Height = 1920, 1080
+	spec := OutputSpec{W: 1600, H: 2560, FPS: 60, Scale: 2, Pos: "right"}
+	got, err := swayPlacedCmd("HEADLESS-1", spec, []Output{o})
+	if want := "output HEADLESS-1 mode 1600x2560@60Hz scale 2 pos 1920 0"; err != nil || got != want {
+		t.Errorf("sway: %q %v, want %q", got, err, want)
+	}
+	spec.Pos = ""
+	if got, err := swayPlacedCmd("HEADLESS-1", spec, nil); err != nil || got != "output HEADLESS-1 mode 1600x2560@60Hz scale 2" {
+		t.Errorf("sway unplaced: %q %v", got, err)
+	}
+	if got := modeArg(OutputSpec{W: 1080, H: 1920, FPS: 30}); got != "1080x1920@30" {
+		t.Errorf("umbriel mode: %q", got)
+	}
+}

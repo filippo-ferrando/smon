@@ -1,0 +1,28 @@
+name: CI
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    container:
+      image: archlinux:latest
+    steps:
+      # nodejs runs the actions; gstreamer + gst-plugins-base-libs are the cgo headers
+      # internal/gst builds against.
+      - name: Install build tools
+        run: pacman -Syu --noconfirm --needed base-devel go git nodejs gstreamer gst-plugins-base-libs
+
+      - uses: actions/checkout@v7
+
+      - name: Check (gofumpt, vet, staticcheck, short tests)
+        run: make check
+
+      - name: Build
+        run: make build

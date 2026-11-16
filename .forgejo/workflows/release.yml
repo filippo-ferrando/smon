@@ -1,0 +1,111 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: write
+
+jobs:
+  build-arch:
+    runs-on: ubuntu-latest
+    container:
+      image: archlinux:latest
+    steps:
+      # makedepends + the cgo headers; the runtime depends are not needed to build.
+      - name: Install build tools
+        run: pacman -Syu --noconfirm --needed base-devel go git nodejs gstreamer gst-plugins-base-libs
+
+      # Full history so makepkg can clone the checkout and check out the tag.
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Create a non-root build user
+        run: |
+          useradd -m builder
+          mkdir -p /tmp/pkgroot
+          chown -R builder:builder "$GITHUB_WORKSPACE" /tmp/pkgroot
+          # makepkg clones the checkout over file://; git refuses a repo owned by someone else.
+          su builder -c "git config --global --add safe.directory '*'"
+
+      - name: Build the smon package
+        run: |
+          set -euo pipefail
+          # pacman versions can't contain '-' (v1.0.0-rc1 -> 1.0.0_rc1).
+          version="${GITHUB_REF_NAME#v}"
+          version="${version//-/_}"
+
+          # Pin pkgver to the tag and drop pkgver(), which would replace it with r<count>.<hash>.
+          sed -e "s/^pkgver=.*/pkgver=$version/" -e '/^pkgver() {/,/^}/d' \
+              packaging/arch/PKGBUILD > /tmp/pkgroot/PKGBUILD
+          cp packaging/arch/60-smon-uinput.rules /tmp/pkgroot/
+          chown -R builder:builder /tmp/pkgroot
+
+          # SMON_REPO points the PKGBUILD's git source at this checkout, at the pushed tag.
+          git fetch --tags --force
+          su builder -c "cd /tmp/pkgroot && SMON_REPO='file://$GITHUB_WORKSPACE#tag=$GITHUB_REF_NAME' makepkg --noconfirm --nodeps"
+
+      - name: Collect artifacts
+        run: |
+          mkdir -p out
+          cp /tmp/pkgroot/*.pkg.tar.zst out/
+          # Guard: debug packages are never part of a release.
+          rm -f out/*-debug-*
+
+      - uses: actions/upload-artifact@v3
+        with:
+          name: arch-packages
+          path: out/*.pkg.tar.zst
+          retention-days: 1
+
+  release:
+    needs: [build-arch]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Write release notes
+        run: |
+          git fetch --tags --force
+          scripts/release-notes.sh "$GITHUB_REF_NAME" > release-notes.md
+
+      - uses: actions/download-artifact@v3
+        with:
+          path: dist
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v3
+        with:
+          body_path: release-notes.md
+          files: dist/**/*
+          fail_on_unmatched_files: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  changelog:
+    needs: release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: main
+          fetch-depth: 0
+          # The automatic Actions token can't push to a protected main branch.
+          token: ${{ secrets.LOCAL_TOKEN || github.token }}
+
+      # Rebuilt from every tag each time, so a failed run is fixed by the next one.
+      - name: Update CHANGELOG.md on main
+        run: |
+          git fetch --tags --force
+          scripts/changelog.sh > CHANGELOG.md
+          git add CHANGELOG.md
+          git diff --cached --quiet && exit 0
+          git config user.name "smon-release"
+          git config user.email "ferrandodfilippo+smon@ik.me"
+          git commit -m "chore(release): changelog for $GITHUB_REF_NAME [skip ci]"
+          git push origin HEAD:main

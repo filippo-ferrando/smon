@@ -87,23 +87,48 @@ func (s *sway) CreateOutput(spec OutputSpec) (string, error) {
 	}
 	writeSwayState(append(readSwayState(), name)) // best effort: only crash cleanup needs it
 
+	cmd, err := swayPlacedCmd(name, spec, after)
+	if err == nil {
+		err = swaymsg(cmd)
+	}
+	if err != nil {
+		s.destroy(name)
+		return "", err
+	}
+	return name, nil
+}
+
+// ResizeOutput implements ResizableOutput: headless outputs take any mode.
+func (s *sway) ResizeOutput(name string, spec OutputSpec) error {
+	var outs []Output
+	if spec.Pos != "" {
+		var err error
+		if outs, err = s.Outputs(); err != nil {
+			return err
+		}
+	}
+	cmd, err := swayPlacedCmd(name, spec, outs)
+	if err != nil {
+		return err
+	}
+	return swaymsg(cmd)
+}
+
+// swayPlacedCmd sets output name's mode and scale, and its position by
+// spec.Pos among outs.
+func swayPlacedCmd(name string, spec OutputSpec, outs []Output) (string, error) {
 	cmd := swayOutputCmd(name, spec)
 	if spec.Pos != "" {
 		w, h := spec.Logical()
-		x, y, ok, err := placeXY(after, name, spec.Pos, w, h)
+		x, y, ok, err := placeXY(outs, name, spec.Pos, w, h)
 		if err != nil {
-			s.destroy(name)
 			return "", err
 		}
 		if ok {
 			cmd += fmt.Sprintf(" pos %d %d", x, y)
 		}
 	}
-	if err := swaymsg(cmd); err != nil {
-		s.destroy(name)
-		return "", err
-	}
-	return name, nil
+	return cmd, nil
 }
 
 // swayOutputCmd sets the new output's mode and scale.

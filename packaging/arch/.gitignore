@@ -1,0 +1,5 @@
+/src/
+/pkg/
+/smon/
+*.pkg.tar.*
+*.log

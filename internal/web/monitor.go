@@ -1,6 +1,7 @@
 package web
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -8,6 +9,8 @@ import (
 	"net"
 	"net/http"
 	"strconv"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/pion/webrtc/v4"
@@ -20,13 +23,27 @@ import (
 type monitor struct {
 	n     int
 	d     *display.Display
-	pipe  *gst.Pipeline
+	kbps  int // the ceiling, -kbps
 	udp   *net.UDPConn
 	video *webrtc.TrackLocalStaticRTP
 	hub   *auHub
 	peer  peerHooks
 	input *inputs
+
+	pipeMu sync.Mutex
+	pipe   *gst.Pipeline // replaced when the monitor turns
+
+	// turnMu is held while the pipeline is replaced, and by stop.
+	turnMu   sync.Mutex
+	portrait atomic.Bool // what its viewer last asked for
+	upright  atomic.Bool // what it is: taller than wide (d.W, d.H change under turnMu)
+	stopped  bool
+	failed   error // the stream could not restart after a turn
+	noTurn   sync.Once
 }
+
+// rtpMTU is the payload size the browsers' RTP gets.
+const rtpMTU = 1200
 
 // startMonitor starts encoding display d for viewers.
 func startMonitor(d *display.Display, n, kbps int, vc videoCodec, in *inputs) (*monitor, error) {
@@ -34,19 +51,18 @@ func startMonitor(d *display.Display, n, kbps int, vc videoCodec, in *inputs) (*
 	if err != nil {
 		return nil, err
 	}
-	udp, pipe, err := d.RTP(kbps, 1200, webGOP*d.FPS)
+	udp, pipe, err := d.RTP(kbps, rtpMTU, webGOP*d.FPS)
 	if err != nil {
 		return nil, err
 	}
-	m := &monitor{
-		n: n, d: d, pipe: pipe, udp: udp, video: video, input: in,
-		hub:  &auHub{needKey: pipe.Keyframe},
-		peer: peerHooks{keyframe: pipe.Keyframe},
-	}
+	m := &monitor{n: n, d: d, kbps: kbps, pipe: pipe, udp: udp, video: video, input: in}
+	m.upright.Store(d.H > d.W)
+	m.hub = &auHub{needKey: m.keyframe}
+	m.peer = peerHooks{keyframe: m.keyframe}
 	if !gst.LiveBitrate(pipe.Encoder) {
 		log.Printf("adaptive bitrate off: encoder %s can't change bitrate while it runs", pipe.Encoder)
 	} else if abrEnabled() {
-		m.peer.abr = newRateCtl(pipe.SetBitrate, kbps)
+		m.peer.abr = newRateCtl(m.setBitrate, kbps)
 		go m.peer.abr.run()
 	}
 	m.peer.stats = &statsSource{
@@ -57,13 +73,113 @@ func startMonitor(d *display.Display, n, kbps int, vc videoCodec, in *inputs) (*
 	return m, nil
 }
 
+// pipeline is the pipeline encoding the monitor now.
+func (m *monitor) pipeline() *gst.Pipeline {
+	m.pipeMu.Lock()
+	defer m.pipeMu.Unlock()
+	return m.pipe
+}
+
+func (m *monitor) keyframe()         { m.pipeline().Keyframe() }
+func (m *monitor) setBitrate(kb int) { m.pipeline().SetBitrate(kb) }
+
+// wait blocks until the stream ends, and returns why. A pipeline replaced
+// by a turn does not count.
+func (m *monitor) wait() error {
+	for {
+		p := m.pipeline()
+		err := p.Wait()
+		m.turnMu.Lock() // a turn in progress decides
+		cur, failed := m.pipeline(), m.failed
+		m.turnMu.Unlock()
+		if failed != nil {
+			return failed
+		}
+		if cur == p {
+			return err
+		}
+	}
+}
+
 // stop ends the stream; the display itself is closed by its owner.
 func (m *monitor) stop() {
+	m.turnMu.Lock()
+	m.stopped = true
+	m.turnMu.Unlock()
 	if m.peer.abr != nil {
 		m.peer.abr.stop()
 	}
-	m.pipe.Stop()
+	m.pipeline().Stop()
 	_ = m.udp.Close()
+}
+
+// orient asks for the monitor to be portrait or landscape, like the screen
+// of the device showing it. Only a viewer that has the monitor to itself
+// asks (see webServer.orient).
+func (m *monitor) orient(portrait bool) {
+	m.portrait.Store(portrait)
+	if !m.d.CanResize() { // its size never changes: d.W and d.H are safe to read
+		if m.d.W != m.d.H && portrait != m.upright.Load() {
+			m.noTurn.Do(func() {
+				log.Printf("monitor %d: the viewer turned, but this compositor can't change the monitor's size while it runs: restart smon (with -portrait for an upright one)", m.n)
+			})
+		}
+		return
+	}
+	go m.turn()
+}
+
+// turn makes the monitor portrait or landscape, as its viewer last asked:
+// the output changes size and the stream restarts at it. Viewers stay
+// connected (rtpSplice keeps their RTP continuous); their next frame is a
+// keyframe at the new size.
+func (m *monitor) turn() {
+	m.turnMu.Lock()
+	defer m.turnMu.Unlock()
+	for !m.stopped && m.failed == nil {
+		want := m.portrait.Load()
+		if m.d.W == m.d.H || want == (m.d.H > m.d.W) { // square: either way
+			return
+		}
+		w, h := m.d.H, m.d.W
+		kbps := m.kbps
+		if m.peer.abr != nil {
+			kbps, _ = m.peer.abr.current() // where adaptive bitrate is now
+		}
+		m.pipeline().Stop() // the viewers keep the last frame meanwhile
+		err := m.d.Resize(w, h)
+		if err != nil {
+			log.Printf("monitor %d: can't turn it %s: %v", m.n, orientation(want), err)
+		}
+		p, perr := m.d.RTPTo(m.udp, kbps, rtpMTU, webGOP*m.d.FPS)
+		if perr != nil && err == nil { // the new size won't encode: back to the old one
+			log.Printf("monitor %d: no stream at %dx%d: %v", m.n, w, h, perr)
+			err = perr
+			if m.d.Resize(h, w) == nil {
+				p, perr = m.d.RTPTo(m.udp, kbps, rtpMTU, webGOP*m.d.FPS)
+			}
+		}
+		if perr != nil {
+			m.failed = fmt.Errorf("the stream did not restart after turning: %w", perr)
+			return
+		}
+		m.pipeMu.Lock()
+		m.pipe = p
+		m.pipeMu.Unlock()
+		m.upright.Store(m.d.H > m.d.W)
+		m.peer.stats.setStream(p.Encoder, fmt.Sprintf("%dx%d", m.d.W, m.d.H))
+		if err != nil {
+			return // stays as it was: don't try again until the viewer turns again
+		}
+		log.Printf("monitor %d (%s) turned %s: %dx%d", m.n, m.d.Output(), orientation(want), m.d.W, m.d.H)
+	}
+}
+
+func orientation(portrait bool) string {
+	if portrait {
+		return "portrait"
+	}
+	return "landscape"
 }
 
 // tracks are what a viewer of this monitor receives: its video, and the
@@ -106,7 +222,7 @@ func (s *webServer) createMonitor(n int, portrait bool) error {
 	s.mons[n] = m
 	s.mu.Unlock()
 	go func() {
-		if err := m.pipe.Wait(); err != nil && s.monitor(n) == m {
+		if err := m.wait(); err != nil && s.monitor(n) == m {
 			log.Printf("monitor %d: gstreamer exited: %v", n, err)
 		}
 	}()
@@ -182,4 +298,36 @@ func monitorParam(r *http.Request) int {
 		return n
 	}
 	return 1
+}
+
+// orientMsg is what a viewer sends when its screen turns, and on connecting:
+// {"t":"orient","portrait":true}.
+type orientMsg struct {
+	T        string `json:"t"`
+	Portrait bool   `json:"portrait"`
+}
+
+// parseOrient reads an orientMsg; ok is false for any other message.
+func parseOrient(b []byte) (portrait, ok bool) {
+	var m orientMsg
+	if !bytes.Contains(b, []byte(`"orient"`)) || json.Unmarshal(b, &m) != nil || m.T != "orient" {
+		return false, false
+	}
+	return m.Portrait, true
+}
+
+// orient turns monitor n to match the screen of viewer cid, when cid is its
+// only viewer: two devices showing one monitor would fight over it.
+func (s *webServer) orient(n int, cid string, portrait bool) {
+	m := s.monitor(n)
+	if m == nil || !s.rotate {
+		return
+	}
+	if v := s.alloc.viewers(n); v > 1 {
+		if up := m.upright.Load(); portrait != up {
+			log.Printf("monitor %d: a viewer turned, but %d devices show it: it stays %s", n, v, orientation(up))
+		}
+		return
+	}
+	m.orient(portrait)
 }

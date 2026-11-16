@@ -3,10 +3,13 @@ package compositor
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
+	"sync"
 	"time"
 
 	"smon/internal/touch"
@@ -19,6 +22,10 @@ func (umbriel) Name() string { return "umbriel" }
 
 func posKey(name string) string   { return "output." + name + ".position" }
 func scaleKey(name string) string { return "output." + name + ".scale" }
+func modeKey(name string) string  { return "output." + name + ".mode" }
+
+// modeArg is spec's mode the way output-create and the mode key take it.
+func modeArg(spec OutputSpec) string { return fmt.Sprintf("%dx%d@%d", spec.W, spec.H, spec.FPS) }
 
 // inputKey is the setting that maps dev's kind of device to one output.
 // umbriel has no per-device mapping, so this also moves any physical
@@ -32,8 +39,9 @@ func inputKey(dev touch.Device) string {
 
 func (u umbriel) CreateOutput(spec OutputSpec) (string, error) {
 	name := spec.name()
-	_ = exec.Command("umbriel", "output-destroy", name).Run() // stale output from a crash
-	if out, err := exec.Command("umbriel", "output-create", name, fmt.Sprintf("%dx%d@%d", spec.W, spec.H, spec.FPS)).CombinedOutput(); err != nil {
+	_ = exec.Command("umbriel", "output-destroy", name).Run()           // stale output from a crash
+	_ = exec.Command("umbriel", "config", "unset", modeKey(name)).Run() // a crash while rotated
+	if out, err := exec.Command("umbriel", "output-create", name, modeArg(spec)).CombinedOutput(); err != nil {
 		return "", fmt.Errorf("umbriel output-create: %v: %s", err, out)
 	}
 	if spec.Scaled() {
@@ -51,10 +59,31 @@ func (u umbriel) CreateOutput(spec OutputSpec) (string, error) {
 }
 
 func (umbriel) DestroyOutput(name string) {
-	_ = exec.Command("umbriel", "output-destroy", name).Run()
+	if out, err := exec.Command("umbriel", "output-destroy", name).CombinedOutput(); err != nil {
+		log.Printf("umbriel output-destroy %s: %v: %s", name, err, strings.TrimSpace(string(out)))
+	}
 	unsetPos(name) // leave no override behind to fight the saved layout
 	_ = exec.Command("umbriel", "config", "unset", scaleKey(name)).Run()
+	_ = exec.Command("umbriel", "config", "unset", modeKey(name)).Run()
 }
+
+// ResizeOutput implements ResizableOutput with a runtime mode override. It
+// places the output by -pos again (its size changed), unless the user has
+// rearranged the displays since: then the saved layout keeps it.
+func (u umbriel) ResizeOutput(name string, spec OutputSpec) error {
+	if out, err := exec.Command("umbriel", "config", "set", modeKey(name), strconv.Quote(modeArg(spec))).CombinedOutput(); err != nil {
+		return fmt.Errorf("umbriel config set %s: %v: %s", modeKey(name), err, out)
+	}
+	if _, moved := umbrielRearranged.Load(name); spec.Pos == "" || moved {
+		return nil
+	}
+	w, h := spec.Logical()
+	return u.layout(name, spec.Pos, w, h)
+}
+
+// umbrielRearranged holds the outputs whose -pos override WatchLayout
+// dropped because the user rearranged the displays.
+var umbrielRearranged sync.Map
 
 func (umbriel) MapInput(dev touch.Device, output string) error {
 	if dev.Monitor > 1 {
@@ -101,6 +130,7 @@ func (u umbriel) layout(name, pos string, w, h int) error {
 // override would otherwise pin SMON-1 away from where the plugin shows it.
 // ponytail: 1s mtime poll instead of inotify; fine for a human dragging monitors.
 func (umbriel) WatchLayout(name string, done chan struct{}) {
+	defer umbrielRearranged.Delete(name)
 	dir, _ := os.UserConfigDir()
 	file := filepath.Join(dir, "umbriel", "outputs.toml")
 	mtime := func() time.Time {
@@ -121,6 +151,7 @@ func (umbriel) WatchLayout(name string, done chan struct{}) {
 			if m := mtime(); !m.Equal(last) {
 				last = m
 				unsetPos(name)
+				umbrielRearranged.Store(name, true)
 			}
 		}
 	}
