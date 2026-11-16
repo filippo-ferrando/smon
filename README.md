@@ -9,7 +9,7 @@ smon creates a virtual output on the umbriel or Hyprland compositor and streams 
 - **LG webOS TVs**: opens the TV's own browser on the WebRTC page.
 
 ```
-go build -o smon .
+make build                                # builds bin/smon (or: go build -o bin/smon ./cmd/smon)
 smon web  [-addr :8080] [-input]          # prints a URL with an access token
 smon usb  [-addr :8080] [-input]          # Android over USB: opens the page on the tablet
 smon list                                 # AirPlay (mDNS) + Miracast (P2P scan)
@@ -98,14 +98,14 @@ Package names are for Arch (and CachyOS, Manjaro, …); other distributions use 
 | Miracast | `networkmanager` (with a Wi-Fi P2P capable card), `dnsmasq` |
 | AirPlay | `avahi` (running `avahi-daemon`) |
 | Touch input (`-input`) | write access to `/dev/uinput` (see [Requirements](#requirements)) |
-| Building | `go`, `gcc` (cgo, for the AirPlay playfair code) |
+| Building | `go`, `gcc`, `pkgconf` (cgo: the AirPlay playfair code, and the video pipeline, which links GStreamer; Arch ships its headers in `gstreamer`/`gst-plugins-base`) |
 
 Everything at once:
 
 ```
 sudo pacman -S --needed hyprland xdg-desktop-portal-hyprland pipewire wireplumber pipewire-pulse libpulse \
   gstreamer gst-plugins-base gst-plugins-good gst-plugins-bad gst-plugin-pipewire gst-plugin-va \
-  gst-plugins-ugly gst-libav android-tools networkmanager dnsmasq avahi go gcc
+  gst-plugins-ugly gst-libav android-tools networkmanager dnsmasq avahi go gcc pkgconf
 ```
 
 Check that GStreamer finds the elements smon uses:
@@ -146,7 +146,7 @@ prints a URL for the tethering interface too.
 Build:
 
 ```
-sudo pacman -S --needed go gcc
+sudo pacman -S --needed go gcc pkgconf
 ```
 
 Runtime (core: capture, encoding, web/USB streaming, audio):
@@ -161,7 +161,7 @@ sudo pacman -S --needed pipewire pipewire-pulse libpulse \
 |---|---|
 | `gst-plugin-pipewire` | `pipewiresrc` (screen capture) |
 | `gst-plugin-va` | `vah264enc` (hardware H.264; needs a VA-API driver such as `intel-media-driver` or `libva-mesa-driver`) |
-| `gst-plugins-ugly` | `x264enc` (software fallback when VA-API is missing) |
+| `gst-plugins-ugly` | `x264enc` (software encoder; often the fastest, see below) |
 | `gst-plugins-bad-libs` | `h264parse`, `mpegtsmux` |
 | `gst-plugins-good` | `rtph264pay`, `rtpmp2tpay`, `rtpopuspay`, `pulsesrc`, `aacparse`, `udpsink` |
 | `gst-plugins-base` | `opusenc`, `videoconvert`, `videoscale`, `audioconvert` |
@@ -191,14 +191,45 @@ connection, enable *Settings → General → Devices → External Devices → TV
 
 - **AirPlay works only with open receivers** (UxPlay/RPiPlay). Licensed AirPlay 2 receivers (Apple TV,
   LG/Samsung TVs) need HomeKit pairing and real FairPlay. They reject us at pair-setup (403).
-- The encoder runs as a `gst-launch-1.0` child, so a receiver's IDR request can't force a keyframe.
-  A 1-second GOP covers it instead.
+- At startup smon times every H.264 encoder (each GPU's VA-API encoder, and x264) at the output size and
+  uses the fastest, since time per frame is latency the encoder adds and older GPUs can be slower than
+  x264. The log prints the timings; `SMON_ENCODER=x264enc` (or e.g. `varenderD129h264enc`) skips the test.
+- Browser viewers get a keyframe on demand: when they connect, when they report loss (PLI/FIR), and when
+  a USB viewer falls behind. At most one every 500 ms; the periodic one comes every 5 s. AirPlay and
+  Miracast receivers can't ask, so they keep a 1-second GOP.
+- WebRTC viewers adapt the bitrate: on congestion (GCC delay overuse, or >10% loss via transport-cc) the
+  encoder drops 30%, down to a tenth of `-kbps`; after 3 s without, it climbs 15% every 2 s back to
+  `-kbps`. The encoder is shared, so the most congested viewer sets the quality for everyone, USB
+  included. Each change is logged; `SMON_ABR=off` keeps the bitrate fixed. With a VA-API encoder each
+  change also costs one keyframe.
 - Miracast negotiates 1920x1080p30 when the sink supports it, otherwise 1280x720p30. AAC audio is sent
   when the sink advertises it.
 - AirPlay mirroring carries no audio (AirPlay audio is a separate encrypted stream smon doesn't implement).
 - Browser audio and video are not lip-synced to each other; both are low-latency, so the drift is small.
 - Touch input supports touch only (no keyboard), and only in the browser viewer.
 
+## Development
+
+```
+make            # fmt-check, vet, lint, short tests, then build
+make test       # full tests, including the real-encoder ones (needs GStreamer)
+make fmt        # goimports + gofumpt
+make lint       # staticcheck with every check enabled
+```
+
+| Path | What it holds |
+| --- | --- |
+| `cmd/smon` | command line: flag parsing and wiring |
+| `internal/display` | portal screencast of SMON-1 or a mirrored screen, and its encoder pipeline |
+| `internal/compositor` | virtual output, placement and touch mapping on umbriel and Hyprland |
+| `internal/gst` | in-process GStreamer pipelines, encoder selection, keyframe and bitrate control |
+| `internal/h264` | Annex-B access units from RTP |
+| `internal/web` | WebRTC and WebSocket viewers, adaptive bitrate, `smon usb` |
+| `internal/cast` | Miracast (WFD RTSP), AirPlay, webOS, receiver discovery |
+| `internal/audio` | the "Second Monitor (smon)" sound output and its capture |
+| `internal/touch` | virtual uinput touchscreen |
+| `internal/config` | per-user state directory |
+
 ## License
 
-GPL-3.0-or-later. `playfair/` is vendored from [UxPlay](https://github.com/FDH2/UxPlay) (GPL-3).
+GPL-3.0-or-later. `internal/cast/playfair/` is vendored from [UxPlay](https://github.com/FDH2/UxPlay) (GPL-3).

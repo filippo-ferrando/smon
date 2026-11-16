@@ -1,0 +1,91 @@
+// Command smon creates a virtual second monitor on umbriel or Hyprland and
+// streams it over WebRTC (browser), USB (Android, via adb), Miracast,
+// AirPlay or to an LG webOS TV.
+package main
+
+import (
+	"log"
+	"os"
+	"os/signal"
+	"strings"
+	"syscall"
+
+	"smon/internal/audio"
+	"smon/internal/cast"
+	"smon/internal/compositor"
+	"smon/internal/display"
+	"smon/internal/touch"
+	"smon/internal/web"
+)
+
+func main() {
+	o := parseArgs(os.Args[1:])
+	if o.cmd == "list" {
+		if err := cast.List(); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
+	if o.cmd == "cast" && o.input {
+		log.Fatal("-input works only with web and usb")
+	}
+	comp, err := compositor.Detect(o.compositor)
+	if err != nil {
+		log.Fatal(err)
+	}
+	if o.cmd == "usb" {
+		if err := web.ADBDevice(); err != nil { // fail before the share picker
+			log.Fatal(err)
+		}
+	}
+
+	snd := newAudio(o)
+	d, err := display.New(comp, o.width, o.height, o.fps, o.pos, o.mode)
+	if err != nil {
+		log.Fatal(err)
+	}
+	if snd != nil {
+		snd.Bind(d)
+	}
+	closeOnSignal(d)
+
+	var tch *touch.Touch
+	if o.input {
+		if tch, err = d.EnableTouch(); err != nil {
+			d.Close()
+			log.Fatal(err)
+		}
+	}
+	switch o.cmd {
+	case "web":
+		err = web.Serve(d, o.addr, o.kbps, web.Options{Touch: tch, Audio: snd})
+	case "usb":
+		err = web.ServeUSB(d, o.addr, o.kbps, tch, snd)
+	default:
+		err = cast.Cast(d, o.target, o.kbps, o.addr, snd)
+	}
+	d.Close()
+	if err != nil {
+		log.Fatal(err)
+	}
+}
+
+// newAudio returns the audio output for this run, or nil for video only.
+// AirPlay mirroring carries no audio; Miracast sends AAC, everything else Opus.
+func newAudio(o options) *audio.Audio {
+	if !o.audio || strings.HasPrefix(o.target, "airplay:") {
+		return nil
+	}
+	return audio.New(!strings.HasPrefix(o.target, "miracast:"))
+}
+
+// closeOnSignal removes the virtual output on Ctrl-C or SIGTERM, then exits.
+func closeOnSignal(d *display.Display) {
+	c := make(chan os.Signal, 1)
+	signal.Notify(c, os.Interrupt, syscall.SIGTERM)
+	go func() {
+		<-c
+		d.Close()
+		os.Exit(0)
+	}()
+}
