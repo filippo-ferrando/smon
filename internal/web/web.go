@@ -116,7 +116,7 @@ func Serve(d *display.Display, addr string, kbps int, opts Options) error {
 		}
 	}
 	go forwardVideo(udp, video, s.hub)
-	s.page = renderPage(opts.Touch != nil, opts.Audio != nil)
+	s.page = renderPage(opts.Touch != nil, opts.Audio != nil, token)
 
 	ln, ice, err := listenTCPAndUDP(addr)
 	if err != nil {
@@ -176,6 +176,11 @@ func (s *webServer) routes() *http.ServeMux {
 	mux.HandleFunc("GET /{$}", s.authed(s.handleIndex))
 	mux.HandleFunc("POST /offer", s.authed(s.handleOffer))
 	mux.HandleFunc("GET /ws", s.authed(s.handleWS))
+	mux.HandleFunc("GET /manifest.webmanifest", s.authed(s.handleManifest))
+	mux.HandleFunc("GET /sw.js", s.authed(s.handleSW))
+	for _, n := range iconSizes { // public, like any favicon
+		mux.HandleFunc("GET /icon-"+strconv.Itoa(n)+".png", handleIcon(n))
+	}
 	if s.caDER != nil {
 		mux.HandleFunc("GET /ca.crt", s.handleCA) // public: a device installs it before it trusts us
 	}
@@ -358,9 +363,10 @@ func forwardVideo(udp *net.UDPConn, track *webrtc.TrackLocalStaticRTP, hub *auHu
 	}
 }
 
-// renderPage turns on the page's touch and sound support as configured.
-func renderPage(input, audio bool) []byte {
-	page := indexHTML
+// renderPage turns on the page's touch and sound support as configured, and
+// fills in the access token its manifest link carries.
+func renderPage(input, audio bool, token string) []byte {
+	page := bytes.ReplaceAll(indexHTML, []byte("{{TOKEN}}"), []byte(token))
 	if input {
 		page = bytes.Replace(page, []byte(`data-input="0"`), []byte(`data-input="1"`), 1)
 	}

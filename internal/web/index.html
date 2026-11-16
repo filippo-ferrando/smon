@@ -2,6 +2,13 @@
 <html lang="en" data-input="0" data-audio="0">
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<meta name="theme-color" content="#000000">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
+<link rel="manifest" href="manifest.webmanifest?t={{TOKEN}}">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
 <title>Second Monitor</title>
 <style>
   html, body { margin: 0; height: 100%; background: #000; overflow: hidden; overscroll-behavior: none; }
@@ -9,9 +16,13 @@
     touch-action: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
   canvas { display: none; }
   #msg { position: fixed; top: 8px; left: 8px; color: #ccc; font: 14px system-ui, sans-serif; pointer-events: none; }
-  #fs { position: fixed; top: 8px; right: 8px; width: 44px; height: 44px; padding: 10px; border: 0; border-radius: 8px;
-    background: rgba(40,40,40,.7); color: #eee; opacity: 0; pointer-events: none; transition: opacity .3s; }
-  #fs.show { opacity: 1; pointer-events: auto; }
+  #bar { position: fixed; top: 8px; right: 8px; display: flex; gap: 8px; opacity: 0; pointer-events: none; transition: opacity .3s; }
+  #bar.show { opacity: 1; pointer-events: auto; }
+  #bar button { width: 44px; height: 44px; padding: 10px; border: 0; border-radius: 8px; background: rgba(40,40,40,.7); color: #eee; }
+  #bar button[hidden] { display: none; }
+  #trust { position: fixed; bottom: 8px; right: 8px; max-width: 22em; padding: 8px 10px; border-radius: 8px;
+    background: rgba(40,40,40,.85); color: #ddd; font: 13px system-ui, sans-serif; display: none; }
+  #trust a { color: #8cc4ff; }
   #snd { position: fixed; bottom: 8px; left: 8px; padding: 6px 10px; border-radius: 8px; background: rgba(40,40,40,.7);
     color: #eee; font: 14px system-ui, sans-serif; pointer-events: none; display: none; }
 </style>
@@ -20,13 +31,32 @@
 <canvas id="c"></canvas>
 <div id="msg">connecting…</div>
 <div id="snd">tap for sound</div>
-<button id="fs" aria-label="Toggle fullscreen"><svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></button>
+<div id="trust">To install this viewer as an app, trust smon's certificate once:
+  <a href="ca.crt">download it</a>, then install it in the device settings (see smon's docs). <a href="#" id="trustx">Dismiss</a></div>
+<div id="bar">
+  <button id="inst" hidden aria-label="Install as an app"><svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></svg></button>
+  <button id="fs" aria-label="Toggle fullscreen"><svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></button>
+</div>
 <script>
 const INPUT = document.documentElement.dataset.input === '1';
 const AUDIO = document.documentElement.dataset.audio === '1';
 const v = document.getElementById('v'), c = document.getElementById('c'), a = document.getElementById('a');
-const msg = document.getElementById('msg'), fs = document.getElementById('fs');
+const msg = document.getElementById('msg'), fs = document.getElementById('fs'), bar = document.getElementById('bar');
 let surface = v, send = null;
+
+// --- reconnecting: back off from 1 s to 10 s while smon is down or restarting ---
+let backoff = 1000;
+// A refusal smon won't change its mind about (wrong token, unsupported codec): stop and say why.
+class Fatal extends Error {}
+function run(start) {
+  start().catch(e => e instanceof Fatal ? msg.textContent = 'error: ' + e.message : retry(start, String(e.message || e)));
+}
+function retry(start, why) {
+  msg.textContent = (why ? why + ' — ' : '') + 'reconnecting…';
+  setTimeout(() => run(start), backoff);
+  backoff = Math.min(backoff * 2, 10000);
+}
+const connected = () => { backoff = 1000; msg.textContent = ''; };
 
 // --- WebRTC (LAN) ---
 async function startRTC() {
@@ -46,18 +76,28 @@ async function startRTC() {
     else if ('playoutDelayHint' in e.receiver) e.receiver.playoutDelayHint = 0;
     const el = e.track.kind === 'audio' ? a : v;
     el.srcObject = new MediaStream([e.track]);
-    if (el === v) msg.textContent = '';
   };
+  let gone = false;
   pc.onconnectionstatechange = () => {
-    if (['failed', 'disconnected'].includes(pc.connectionState)) {
-      msg.textContent = 'reconnecting…'; send = null; pc.close(); setTimeout(startRTC, 1000);
+    if (pc.connectionState === 'connected') connected();
+    if (!gone && ['failed', 'disconnected', 'closed'].includes(pc.connectionState)) {
+      gone = true; send = null; pc.close(); retry(startRTC);
     }
   };
   await pc.setLocalDescription(await pc.createOffer());
   await new Promise(r => pc.iceGatheringState === 'complete' ? r() :
     pc.addEventListener('icegatheringstatechange', () => pc.iceGatheringState === 'complete' && r()));
-  const res = await fetch('/offer' + location.search, { method: 'POST', body: JSON.stringify(pc.localDescription) });
-  if (!res.ok) { msg.textContent = 'error: ' + await res.text(); return; }
+  let res;
+  try {
+    res = await fetch('/offer' + location.search, { method: 'POST', body: JSON.stringify(pc.localDescription) });
+  } catch (e) { pc.close(); throw new Error('smon is not reachable'); }
+  if (!res.ok) {
+    const text = (await res.text()).trim();
+    pc.close();
+    if (res.status === 403) throw new Fatal('this link is no longer valid (smon -new-token?): open the new URL smon prints');
+    if (res.status >= 400 && res.status < 500) throw new Fatal(text);
+    throw new Error(text);
+  }
   await pc.setRemoteDescription(await res.json());
 }
 
@@ -86,7 +126,7 @@ function startWS() {
       dec = new VideoDecoder({
         output: f => {
           if (c.width !== f.displayWidth || c.height !== f.displayHeight) { c.width = f.displayWidth; c.height = f.displayHeight; }
-          ctx.drawImage(f, 0, 0); f.close(); msg.textContent = '';
+          ctx.drawImage(f, 0, 0); f.close(); if (msg.textContent) connected();
         },
         error: err => { msg.textContent = 'decoder: ' + err.message; needKey(); },
       });
@@ -98,9 +138,9 @@ function startWS() {
     dec.decode(new EncodedVideoChunk({ type: key ? 'key' : 'delta', timestamp: ts += 33333, data: au }));
   };
   ws.onclose = () => {
-    send = null; msg.textContent = 'reconnecting…';
+    send = null;
     try { dec && dec.close(); } catch {}
-    setTimeout(startWS, 1000);
+    retry(async () => startWS());
   };
 }
 
@@ -168,13 +208,34 @@ for (const el of [v, c]) {
   el.addEventListener('contextmenu', e => e.preventDefault()); // long press
 }
 
-// --- fullscreen button (double-tap would be a touch on the desktop) ---
+// --- toolbar: fullscreen, install (double-tap would be a touch on the desktop) ---
 let fsTimer;
-function showFs() { fs.classList.add('show'); clearTimeout(fsTimer); fsTimer = setTimeout(() => fs.classList.remove('show'), 3000); }
+function showFs() { bar.classList.add('show'); clearTimeout(fsTimer); fsTimer = setTimeout(() => bar.classList.remove('show'), 3000); }
 fs.onclick = () => document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen();
 showFs();
 
-// keep the tablet awake (needs a secure context, so only over USB/localhost)
+// --- installable app ---
+// The service worker keeps this page available while smon is down, so the app
+// opens and waits instead of failing. Browsers only allow it on a trusted
+// connection: a certificate warning clicked through is not enough.
+const inst = document.getElementById('inst'), trust = document.getElementById('trust');
+let installPrompt = null;
+window.addEventListener('beforeinstallprompt', e => { e.preventDefault(); installPrompt = e; inst.hidden = false; showFs(); });
+inst.onclick = async () => { if (!installPrompt) return; installPrompt.prompt(); await installPrompt.userChoice; installPrompt = null; inst.hidden = true; };
+window.addEventListener('appinstalled', () => { inst.hidden = true; });
+document.getElementById('trustx').onclick = e => {
+  e.preventDefault(); trust.style.display = 'none';
+  try { localStorage.setItem('smon-trust-dismissed', '1'); } catch {}
+};
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('sw.js' + location.search, { scope: '/' }).catch(() => {
+    let dismissed = false;
+    try { dismissed = localStorage.getItem('smon-trust-dismissed') === '1'; } catch {}
+    if (location.protocol === 'https:' && !dismissed) trust.style.display = 'block';
+  });
+}
+
+// keep the tablet awake (needs a secure context: HTTPS, or localhost over USB)
 async function wake() { try { if (document.visibilityState === 'visible') await navigator.wakeLock?.request('screen'); } catch {} }
 document.addEventListener('visibilitychange', wake); wake();
 
@@ -183,7 +244,7 @@ if (location.hostname === 'localhost') {
   if ('VideoDecoder' in window) startWS();
   else msg.textContent = 'this browser lacks WebCodecs (VideoDecoder), needed over USB: update it, or use Chrome';
 } else {
-  startRTC().catch(e => msg.textContent = 'error: ' + e);
+  run(startRTC);
 }
 </script>
 </html>
