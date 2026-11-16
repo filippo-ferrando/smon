@@ -27,7 +27,7 @@ func (*kde) CreateOutput(OutputSpec) (string, error) { return "", nil }
 
 func (*kde) DestroyOutput(string) {} // closing the portal session removes it
 
-func (*kde) WatchLayout(chan struct{}) {} // KWin saves the layout itself
+func (*kde) WatchLayout(string, chan struct{}) {} // KWin saves the layout itself
 
 // PlaceOutput implements PortalOutput.
 func (k *kde) PlaceOutput(name string, spec OutputSpec) error {

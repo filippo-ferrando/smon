@@ -30,7 +30,7 @@ func (*gnome) CreateOutput(OutputSpec) (string, error) { return "", nil }
 
 func (*gnome) DestroyOutput(string) {} // closing the portal session removes it
 
-func (*gnome) WatchLayout(chan struct{}) {} // Mutter keeps the layout itself
+func (*gnome) WatchLayout(string, chan struct{}) {} // Mutter keeps the layout itself
 
 // CapsSized implements CapsSizedOutput.
 func (*gnome) CapsSized() bool { return true }

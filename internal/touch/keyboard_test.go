@@ -63,3 +63,16 @@ func TestKeyboardReleasesHeldKeys(t *testing.T) {
 		t.Fatal("release must free viewer 1's keys only")
 	}
 }
+
+func TestDeviceFor(t *testing.T) {
+	if TouchDevice.For(1) != TouchDevice {
+		t.Fatal("monitor 1 must keep the plain identity")
+	}
+	d := PenDevice.For(3)
+	if d.Name != "smon pen 3" || d.Product != 0x5361 || !d.Pen || d.Monitor != 3 {
+		t.Fatalf("pen for monitor 3: %+v", d)
+	}
+	if d.Sway() != "4617:21345:smon_pen_3" || d.Hyprland() != "smon-pen-3" {
+		t.Fatalf("names: %s %s", d.Sway(), d.Hyprland())
+	}
+}

@@ -16,13 +16,26 @@ import (
 // compositor lets it pick the name (umbriel, Hyprland).
 const OutputName = "SMON-1"
 
+// MonitorName is the name of smon's monitor n (1-based) where smon picks it:
+// SMON-1, SMON-2, ...
+func MonitorName(n int) string { return fmt.Sprintf("SMON-%d", max(n, 1)) }
+
 // OutputSpec is the virtual output smon asks for: W x H pixels at FPS,
 // placed Pos (""; or right|left|above|below) and scaled by Scale (0 or 1: not
 // scaled; 2 makes everything on it twice as big, for a high-DPI tablet).
 type OutputSpec struct {
+	Name      string // where smon names outputs (umbriel, Hyprland); "" is OutputName
 	W, H, FPS int
 	Pos       string
 	Scale     float64
+}
+
+// name is the output name smon asks for.
+func (s OutputSpec) name() string {
+	if s.Name == "" {
+		return OutputName
+	}
+	return s.Name
 }
 
 // scale is the output scale, 1 when unset.
@@ -56,7 +69,7 @@ type Compositor interface {
 	CreateOutput(spec OutputSpec) (string, error)
 	DestroyOutput(name string)
 	// WatchLayout runs until done is closed; a no-op where it does not apply.
-	WatchLayout(done chan struct{})
+	WatchLayout(name string, done chan struct{})
 	// MapInput maps one of smon's virtual input devices (touchscreen or pen),
 	// which already exists, to an output; UnmapInput undoes it after the
 	// device is gone.

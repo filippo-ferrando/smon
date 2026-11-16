@@ -22,18 +22,19 @@ type streamStats struct {
 	Size    string `json:"size"`
 	FPS     int    `json:"fps"`
 	Viewers int64  `json:"viewers"`
+	Mon     string `json:"mon,omitempty"` // the output's name
 }
 
 // statsSource builds the stats message for one stream.
 type statsSource struct {
-	encoder, codec, size string
-	fps, kbps            int
-	abr                  *rateCtl // nil: fixed bitrate
-	viewers              atomic.Int64
+	encoder, codec, size, mon string
+	fps, kbps                 int
+	abr                       *rateCtl // nil: fixed bitrate
+	viewers                   atomic.Int64
 }
 
 func (s *statsSource) message() []byte {
-	m := streamStats{T: "stats", Encoder: s.encoder, Codec: s.codec, Kbps: s.kbps, Max: s.kbps, Size: s.size, FPS: s.fps, Viewers: s.viewers.Load()}
+	m := streamStats{T: "stats", Encoder: s.encoder, Codec: s.codec, Kbps: s.kbps, Max: s.kbps, Size: s.size, FPS: s.fps, Viewers: s.viewers.Load(), Mon: s.mon}
 	if s.abr != nil {
 		m.Kbps, m.Max = s.abr.current()
 	}

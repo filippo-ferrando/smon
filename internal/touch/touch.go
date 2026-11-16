@@ -202,11 +202,12 @@ func ioctlPtr(fd uintptr, req uint, p unsafe.Pointer) error {
 	return nil
 }
 
-// New creates the uinput touchscreen, w x h units in size.
-func New(w, h int) (*Touch, error) {
+// New creates the uinput touchscreen dev (TouchDevice, or TouchDevice.For a
+// later monitor), w x h units in size.
+func New(dev Device, w, h int) (*Touch, error) {
 	const res = 10 // nominal; only needs to be nonzero
 	f, err := create(spec{
-		dev:  TouchDevice,
+		dev:  dev,
 		evs:  []int{evSyn, evKey, evAbs},
 		keys: []uint16{btnTouch},
 		abs: []absAxis{

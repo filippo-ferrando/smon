@@ -77,7 +77,7 @@ func (d *Display) screencast(mode string) error {
 	d.conn = conn
 	p := newPortal(conn)
 
-	res, err := p.call("CreateSession", map[string]dbus.Variant{"session_handle_token": dbus.MakeVariant("smon")})
+	res, err := p.call("CreateSession", map[string]dbus.Variant{"session_handle_token": dbus.MakeVariant(fmt.Sprintf("smon_m%d", d.N))})
 	if err != nil {
 		return err
 	}
@@ -92,7 +92,7 @@ func (d *Display) screencast(mode string) error {
 		"cursor_mode":  dbus.MakeVariant(uint32(2)), // embedded
 		"persist_mode": dbus.MakeVariant(uint32(2)), // until revoked
 	}
-	if tok, err := os.ReadFile(tokenPath(mode)); err == nil {
+	if tok, err := os.ReadFile(d.tokenPath(mode)); err == nil {
 		opts["restore_token"] = dbus.MakeVariant(strings.TrimSpace(string(tok)))
 	}
 	if _, err := p.call("SelectSources", opts, session); err != nil {
@@ -109,11 +109,11 @@ func (d *Display) screencast(mode string) error {
 	d.node = streams[0][0].(uint32)
 	props, _ := streams[0][1].(map[string]dbus.Variant)
 	if err := d.checkSource(mode, props); err != nil {
-		_ = os.Remove(tokenPath(mode)) // forget the wrong pick so the picker shows next time
+		_ = os.Remove(d.tokenPath(mode)) // forget the wrong pick so the picker shows next time
 		return err
 	}
 	if tok, ok := res["restore_token"]; ok {
-		saveToken(mode, tok.Value().(string))
+		d.saveToken(mode, tok.Value().(string))
 	}
 
 	var fd dbus.UnixFD
@@ -126,10 +126,10 @@ func (d *Display) screencast(mode string) error {
 
 // saveToken keeps the portal restore token so later runs skip the picker.
 // Failing only means the picker shows again, so it just warns.
-func saveToken(mode, tok string) {
+func (d *Display) saveToken(mode, tok string) {
 	err := os.MkdirAll(config.Dir(), 0o700)
 	if err == nil {
-		err = os.WriteFile(tokenPath(mode), []byte(tok), 0o600)
+		err = os.WriteFile(d.tokenPath(mode), []byte(tok), 0o600)
 	}
 	if err != nil {
 		log.Printf("restore token not saved: %v", err)

@@ -17,7 +17,8 @@ type umbriel struct{}
 
 func (umbriel) Name() string { return "umbriel" }
 
-const posKey = "output." + OutputName + ".position"
+func posKey(name string) string   { return "output." + name + ".position" }
+func scaleKey(name string) string { return "output." + name + ".scale" }
 
 // inputKey is the setting that maps dev's kind of device to one output.
 // umbriel has no per-device mapping, so this also moves any physical
@@ -29,22 +30,20 @@ func inputKey(dev touch.Device) string {
 	return "input.touch.map_to_output"
 }
 
-const scaleKey = "output." + OutputName + ".scale"
-
 func (u umbriel) CreateOutput(spec OutputSpec) (string, error) {
-	name := OutputName
+	name := spec.name()
 	_ = exec.Command("umbriel", "output-destroy", name).Run() // stale output from a crash
 	if out, err := exec.Command("umbriel", "output-create", name, fmt.Sprintf("%dx%d@%d", spec.W, spec.H, spec.FPS)).CombinedOutput(); err != nil {
 		return "", fmt.Errorf("umbriel output-create: %v: %s", err, out)
 	}
 	if spec.Scaled() {
-		if out, err := exec.Command("umbriel", "config", "set", scaleKey, spec.scaleArg()).CombinedOutput(); err != nil {
+		if out, err := exec.Command("umbriel", "config", "set", scaleKey(name), spec.scaleArg()).CombinedOutput(); err != nil {
 			u.DestroyOutput(name)
-			return "", fmt.Errorf("umbriel config set %s: %v: %s", scaleKey, err, out)
+			return "", fmt.Errorf("umbriel config set %s: %v: %s", scaleKey(name), err, out)
 		}
 	}
 	w, h := spec.Logical()
-	if err := u.layout(spec.Pos, w, h); err != nil {
+	if err := u.layout(name, spec.Pos, w, h); err != nil {
 		u.DestroyOutput(name)
 		return "", err
 	}
@@ -53,11 +52,14 @@ func (u umbriel) CreateOutput(spec OutputSpec) (string, error) {
 
 func (umbriel) DestroyOutput(name string) {
 	_ = exec.Command("umbriel", "output-destroy", name).Run()
-	unsetPos() // leave no override behind to fight the saved layout
-	_ = exec.Command("umbriel", "config", "unset", scaleKey).Run()
+	unsetPos(name) // leave no override behind to fight the saved layout
+	_ = exec.Command("umbriel", "config", "unset", scaleKey(name)).Run()
 }
 
 func (umbriel) MapInput(dev touch.Device, output string) error {
+	if dev.Monitor > 1 {
+		return fmt.Errorf("umbriel maps every touchscreen and tablet to one output: touch and pen work on %s only", OutputName)
+	}
 	key := inputKey(dev)
 	if out, err := exec.Command("umbriel", "config", "set", key, strconv.Quote(output)).CombinedOutput(); err != nil {
 		return fmt.Errorf("umbriel config set %s: %v: %s", key, err, out)
@@ -66,36 +68,39 @@ func (umbriel) MapInput(dev touch.Device, output string) error {
 }
 
 func (umbriel) UnmapInput(dev touch.Device) {
+	if dev.Monitor > 1 {
+		return // never mapped
+	}
 	_ = exec.Command("umbriel", "config", "unset", inputKey(dev)).Run()
 }
 
-// unsetPos drops smon's runtime position override for SMON-1.
-func unsetPos() { _ = exec.Command("umbriel", "config", "unset", posKey).Run() }
+// unsetPos drops smon's runtime position override for output name.
+func unsetPos(name string) { _ = exec.Command("umbriel", "config", "unset", posKey(name)).Run() }
 
 // layout leaves SMON-1 to the saved display layout (outputs.toml, owned by
 // the displays plugin; umbriel itself keeps outputs from overlapping), unless
 // pos asks smon to place it with a runtime override.
-func (u umbriel) layout(pos string, w, h int) error {
+func (u umbriel) layout(name, pos string, w, h int) error {
 	if pos == "" {
-		unsetPos()
+		unsetPos(name)
 		return nil
 	}
 	outs, err := u.Outputs()
 	if err != nil {
 		return err
 	}
-	x, y, ok, err := placeXY(outs, OutputName, pos, w, h)
+	x, y, ok, err := placeXY(outs, name, pos, w, h)
 	if err != nil || !ok {
 		return err // no other outputs: leave it where umbriel put it
 	}
-	return exec.Command("umbriel", "config", "set", posKey, fmt.Sprintf("[%d,%d]", x, y)).Run()
+	return exec.Command("umbriel", "config", "set", posKey(name), fmt.Sprintf("[%d,%d]", x, y)).Run()
 }
 
 // WatchLayout hands placement back to the saved layout whenever the user
 // rearranges displays (the displays plugin rewrites outputs.toml): a runtime
 // override would otherwise pin SMON-1 away from where the plugin shows it.
 // ponytail: 1s mtime poll instead of inotify; fine for a human dragging monitors.
-func (umbriel) WatchLayout(done chan struct{}) {
+func (umbriel) WatchLayout(name string, done chan struct{}) {
 	dir, _ := os.UserConfigDir()
 	file := filepath.Join(dir, "umbriel", "outputs.toml")
 	mtime := func() time.Time {
@@ -115,7 +120,7 @@ func (umbriel) WatchLayout(done chan struct{}) {
 		case <-t.C:
 			if m := mtime(); !m.Equal(last) {
 				last = m
-				unsetPos()
+				unsetPos(name)
 			}
 		}
 	}

@@ -136,11 +136,12 @@ type Pen struct {
 	owner int // viewer holding the pen; 0: none
 }
 
-// NewPen creates the uinput pen tablet for an output w x h in size.
-func NewPen(w, h int) (*Pen, error) {
+// NewPen creates the uinput pen tablet dev (PenDevice, or PenDevice.For a
+// later monitor) for an output w x h in size.
+func NewPen(dev Device, w, h int) (*Pen, error) {
 	const res = 10
 	f, err := create(spec{
-		dev:  PenDevice,
+		dev:  dev,
 		evs:  []int{evSyn, evKey, evAbs},
 		keys: []uint16{btnToolPen, btnToolRubber, btnTouch, btnStylus, btnStylus2},
 		abs: []absAxis{

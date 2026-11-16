@@ -15,13 +15,13 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"sync"
 	"sync/atomic"
 	"time"
 
 	"smon/internal/audio"
 	"smon/internal/config"
 	"smon/internal/display"
-	"smon/internal/gst"
 	"smon/internal/rtpau"
 	"smon/internal/touch"
 
@@ -53,6 +53,13 @@ type Options struct {
 	Audio    *audio.Audio                       // sound sent to the smon output device; nil: video only
 	Ready    func(port int, token string) error // runs once the server is up
 
+	// Monitors caps how many monitors viewers get: above 1, each new viewer
+	// gets one of its own, made by NewMonitor (n from 2; portrait: the
+	// viewer's screen is upright) and closed by CloseMonitor when idle.
+	Monitors     int
+	NewMonitor   func(n int, portrait bool) (*display.Display, *touch.Touch, *touch.Pen, error)
+	CloseMonitor func(*display.Display)
+
 	TLS      bool // serve HTTPS with smon's own certificate (see tls.go)
 	QR       bool // print the viewer URL as a QR code too, on a terminal
 	NewToken bool // replace the saved access token with a new one
@@ -64,53 +71,47 @@ var viewers atomic.Int64 // namespaces pointer ids per viewer
 // over WebRTC, or over a WebSocket decoded with WebCodecs when the page is
 // on localhost (adb reverse, which carries only TCP). HTTP and WebRTC media
 // share one port number (TCP + UDP) so a single firewall rule covers both.
+//
+// d is monitor 1. With opts.Monitors above 1, each further viewer gets a
+// monitor of its own, made by opts.NewMonitor, until there are that many.
 func Serve(d *display.Display, addr string, kbps int, opts Options) error {
-	vc := codecFor(d.Codec)
-	video, err := webrtc.NewTrackLocalStaticRTP(webrtc.RTPCodecCapability{MimeType: vc.mime, ClockRate: 90000}, "video", "smon")
-	if err != nil {
-		return err
-	}
-	udp, pipe, err := d.RTP(kbps, 1200, webGOP*d.FPS)
-	if err != nil {
-		return err
-	}
-	defer pipe.Stop()
-
 	token, err := loadToken(config.Dir(), opts.NewToken)
 	if err != nil {
 		return fmt.Errorf("access token: %w", err)
 	}
+	vc := codecFor(d.Codec)
+	first, err := startMonitor(d, 1, kbps, vc, &inputs{touch: opts.Touch, pen: opts.Pen, kbd: opts.Keyboard})
+	if err != nil {
+		return err
+	}
+	defer first.stop()
 	s := &webServer{
-		token: token,
-		input: &inputs{touch: opts.Touch, pen: opts.Pen, kbd: opts.Keyboard},
-		hub:   &auHub{needKey: pipe.Keyframe},
-		peer:  peerHooks{keyframe: pipe.Keyframe},
+		token: token, codec: vc, kbps: kbps, kbd: opts.Keyboard,
+		mons:       map[int]*monitor{1: first},
+		newMonitor: opts.NewMonitor, closeMonitor: opts.CloseMonitor,
 	}
-	s.codec = vc
-	if !gst.LiveBitrate(pipe.Encoder) {
-		log.Printf("adaptive bitrate off: encoder %s can't change bitrate while it runs", pipe.Encoder)
-	} else if abrEnabled() {
-		s.peer.abr = newRateCtl(pipe.SetBitrate, kbps)
-		go s.peer.abr.run()
+	if s.closeMonitor == nil {
+		s.closeMonitor = (*display.Display).Close
 	}
-	s.peer.stats = &statsSource{
-		encoder: pipe.Encoder, codec: vc.name, size: fmt.Sprintf("%dx%d", d.W, d.H),
-		fps: d.FPS, kbps: kbps, abr: s.peer.abr,
+	s.alloc = newAllocator(max(opts.Monitors, 1), s.createMonitor, s.destroyMonitor)
+	if opts.Monitors > 1 {
+		done := make(chan struct{})
+		defer close(done)
+		go s.reapMonitors(done)
+		defer s.closeAll()
 	}
-	s.tracks = []webrtc.TrackLocal{video}
 	if opts.Audio != nil {
-		audio, stop, err := startWebAudio(opts.Audio, s.hub)
+		audio, stop, err := startWebAudio(opts.Audio, first.hub) // WebSocket viewers are all on monitor 1
 		if err != nil {
 			return err
 		}
 		if audio != nil {
 			defer stop()
-			s.tracks = append(s.tracks, audio)
+			s.audio = audio
 		} else {
 			opts.Audio = nil
 		}
 	}
-	go forwardVideo(udp, video, s.hub, vc.asm)
 	s.page = renderPage(pageFlags{input: opts.Touch != nil, pen: opts.Pen != nil, keyboard: opts.Keyboard != nil, audio: opts.Audio != nil, codec: vc.name}, token)
 
 	ln, ice, err := listenTCPAndUDP(addr)
@@ -134,12 +135,15 @@ func Serve(d *display.Display, addr string, kbps int, opts Options) error {
 	}
 	var se webrtc.SettingEngine
 	se.SetICEUDPMux(webrtc.NewICEUDPMux(nil, ice))
-	if _, s.newPC, err = webAPI(se, s.peer.abr != nil); err != nil {
+	if _, s.newPC, err = webAPI(se, first.peer.abr != nil); err != nil {
 		return err
 	}
 
 	port := ln.Addr().(*net.TCPAddr).Port
 	printURLs(scheme, ips, port, s.token, opts)
+	if opts.Monitors > 1 {
+		fmt.Printf("each device that opens it gets its own monitor, up to %d; add &m=1 to the URL to watch monitor 1 instead\n", opts.Monitors)
+	}
 
 	errc := make(chan error, 3)
 	go func() { errc <- http.Serve(ln, s.routes()) }()
@@ -150,26 +154,50 @@ func Serve(d *display.Display, addr string, kbps int, opts Options) error {
 			}
 		}()
 	}
-	go func() { errc <- fmt.Errorf("gstreamer exited: %v", pipe.Wait()) }()
+	go func() { errc <- fmt.Errorf("gstreamer exited: %v", first.pipe.Wait()) }()
 	return <-errc
+}
+
+// closeAll closes every monitor after the first, when Serve ends.
+func (s *webServer) closeAll() {
+	s.mu.Lock()
+	var rest []*monitor
+	for n, m := range s.mons {
+		if n > 1 {
+			rest = append(rest, m)
+			delete(s.mons, n)
+		}
+	}
+	s.mu.Unlock()
+	for _, m := range rest {
+		m.stop()
+		s.closeMonitor(m.d)
+	}
 }
 
 // webServer holds what the HTTP handlers share for one Serve run.
 type webServer struct {
-	token  string
-	caDER  []byte // smon's CA certificate, served at /ca.crt; nil without TLS
-	page   []byte
-	tracks []webrtc.TrackLocal
-	input  *inputs
-	codec  videoCodec // what the video track carries
-	hub    *auHub
-	peer   peerHooks
-	newPC  func() (*webrtc.PeerConnection, *bweProbe, error) // set before serving
+	token string
+	caDER []byte // smon's CA certificate, served at /ca.crt; nil without TLS
+	page  []byte
+	codec videoCodec // what the video tracks carry
+	kbps  int
+	audio webrtc.TrackLocal                                 // shared by every monitor; nil: no sound
+	kbd   *touch.Keyboard                                   // shared: keys go to the focused window
+	newPC func() (*webrtc.PeerConnection, *bweProbe, error) // set before serving
+
+	alloc        *allocator
+	newMonitor   func(n int, portrait bool) (*display.Display, *touch.Touch, *touch.Pen, error)
+	closeMonitor func(*display.Display)
+
+	mu   sync.Mutex
+	mons map[int]*monitor
 }
 
 func (s *webServer) routes() *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /{$}", s.authed(s.handleIndex))
+	mux.HandleFunc("POST /claim", s.authed(s.handleClaim))
 	mux.HandleFunc("POST /offer", s.authed(s.handleOffer))
 	mux.HandleFunc("GET /ws", s.authed(s.handleWS))
 	mux.HandleFunc("GET /manifest.webmanifest", s.authed(s.handleManifest))
@@ -236,7 +264,17 @@ func (s *webServer) handleOffer(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, s.codec.unsupported(), http.StatusUnsupportedMediaType)
 		return
 	}
-	answer, err := answerOffer(s.newPC, s.tracks, offer, s.input, s.peer)
+	n := monitorParam(r)
+	m := s.monitor(n)
+	if m == nil { // closed since the claim: the page claims again
+		http.Error(w, fmt.Sprintf("monitor %d is gone", n), http.StatusServiceUnavailable)
+		return
+	}
+	cid := r.URL.Query().Get("c")
+	hooks := m.peer
+	hooks.join = func() { s.alloc.join(n, cid) }
+	hooks.leave = func() { s.alloc.leave(n, cid) }
+	answer, err := answerOffer(s.newPC, m.tracks(s.audio), offer, m.input, hooks)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -257,9 +295,13 @@ func (s *webServer) handleWS(w http.ResponseWriter, r *http.Request) {
 	owner := int(viewers.Add(1))
 	log.Printf("viewer %d connected (websocket)", owner)
 	defer log.Printf("viewer %d disconnected", owner)
-	sub := s.hub.subscribe()
-	defer s.hub.unsubscribe(sub)
-	if st := s.peer.stats; st != nil {
+	m := s.monitor(1) // USB serves one monitor
+	cid := "ws-" + strconv.Itoa(owner)
+	s.alloc.join(1, cid)
+	defer s.alloc.leave(1, cid)
+	sub := m.hub.subscribe()
+	defer m.hub.unsubscribe(sub)
+	if st := m.peer.stats; st != nil {
 		st.viewers.Add(1)
 		defer st.viewers.Add(-1)
 	}
@@ -276,31 +318,31 @@ func (s *webServer) handleWS(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			if bytes.Equal(msg, wsKeyRequest) { // the client's decoder lost sync
-				s.peer.keyframe()
-			} else if s.input.enabled() {
-				s.input.handle(owner, msg)
+				m.peer.keyframe()
+			} else if m.input.enabled() {
+				m.input.handle(owner, msg)
 			}
 		}
 	}()
-	if s.input.enabled() {
-		defer s.input.release(owner)
+	if m.input.enabled() {
+		defer m.input.release(owner)
 	}
 	for {
-		var m []byte
+		var msg []byte
 		kind := websocket.BinaryMessage
 		select {
-		case m = <-sub.c:
-		case m = <-sub.a:
+		case msg = <-sub.c:
+		case msg = <-sub.a:
 		case <-tick.C: // stats go as text, media as binary
-			if s.peer.stats == nil {
+			if m.peer.stats == nil {
 				continue
 			}
-			m, kind = s.peer.stats.message(), websocket.TextMessage
+			msg, kind = m.peer.stats.message(), websocket.TextMessage
 		case <-done:
 			return
 		}
 		_ = c.SetWriteDeadline(time.Now().Add(wsWriteTimeout))
-		if c.WriteMessage(kind, m) != nil {
+		if c.WriteMessage(kind, msg) != nil {
 			return
 		}
 	}
@@ -420,6 +462,8 @@ type peerHooks struct {
 	keyframe func()       // the viewer needs an IDR; nil: rely on the periodic one
 	abr      *rateCtl     // nil: fixed bitrate
 	stats    *statsSource // nil: no stats for the viewer
+
+	join, leave func() // the viewer connected, and went away; nil: no-op
 }
 
 // answerOffer creates a peer connection for one viewer, sending tracks, and
@@ -463,8 +507,13 @@ func answerOffer(newPC func() (*webrtc.PeerConnection, *bweProbe, error), tracks
 				hooks.abr.add(bwe)
 				time.AfterFunc(5*time.Second, func() { logABR(owner, bwe) })
 			}
-			if hooks.stats != nil && counted.CompareAndSwap(false, true) {
-				hooks.stats.viewers.Add(1)
+			if counted.CompareAndSwap(false, true) {
+				if hooks.stats != nil {
+					hooks.stats.viewers.Add(1)
+				}
+				if hooks.join != nil {
+					hooks.join()
+				}
 			}
 		case webrtc.PeerConnectionStateFailed, webrtc.PeerConnectionStateClosed, webrtc.PeerConnectionStateDisconnected:
 			if in.enabled() {
@@ -473,8 +522,13 @@ func answerOffer(newPC func() (*webrtc.PeerConnection, *bweProbe, error), tracks
 			if hooks.abr != nil && bwe != nil {
 				hooks.abr.remove(bwe)
 			}
-			if hooks.stats != nil && counted.CompareAndSwap(true, false) {
-				hooks.stats.viewers.Add(-1)
+			if counted.CompareAndSwap(true, false) {
+				if hooks.stats != nil {
+					hooks.stats.viewers.Add(-1)
+				}
+				if hooks.leave != nil {
+					hooks.leave()
+				}
 			}
 			_ = pc.Close()
 		}

@@ -7,7 +7,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
+	"sync"
 
 	"smon/internal/config"
 	"smon/internal/touch"
@@ -16,13 +18,16 @@ import (
 // sway drives Sway through swaymsg. create_output and `output … unplug` need
 // Sway 1.8 or newer. Sway names headless outputs itself (HEADLESS-<n>, never
 // reused), so smon learns the name by comparing the outputs before and after.
-type sway struct{}
+type sway struct {
+	mu      sync.Mutex // one create at a time: the new output is found by diffing
+	cleaned bool       // stale outputs from a crash removed (once per run)
+}
 
 // Name implements compositor.
 func (*sway) Name() string { return "sway" }
 
-// swayState remembers the output smon created, so a run after a crash can
-// remove it: its name differs every time.
+// swayState remembers the outputs smon created, one per line, so a run
+// after a crash can remove them: their names differ every time.
 func swayState() string { return filepath.Join(config.Dir(), "sway-output") }
 
 // swaymsg runs a sway command and checks every reply: swaymsg reports a
@@ -56,8 +61,14 @@ func swayReply(b []byte) error {
 }
 
 func (s *sway) CreateOutput(spec OutputSpec) (string, error) {
-	if old, err := os.ReadFile(swayState()); err == nil {
-		s.DestroyOutput(strings.TrimSpace(string(old))) // stale output from a crash
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.cleaned { // outputs left by a crash; later ones in this run are ours
+		s.cleaned = true
+		for _, old := range readSwayState() {
+			_ = swaymsg("output " + old + " unplug")
+		}
+		_ = os.Remove(swayState())
 	}
 	before, err := s.Outputs()
 	if err != nil {
@@ -74,15 +85,14 @@ func (s *sway) CreateOutput(spec OutputSpec) (string, error) {
 	if name == "" {
 		return "", errors.New("sway create_output: no new output appeared")
 	}
-	_ = os.MkdirAll(config.Dir(), 0o700)
-	_ = os.WriteFile(swayState(), []byte(name), 0o600) // best effort: only crash cleanup needs it
+	writeSwayState(append(readSwayState(), name)) // best effort: only crash cleanup needs it
 
 	cmd := swayOutputCmd(name, spec)
 	if spec.Pos != "" {
 		w, h := spec.Logical()
 		x, y, ok, err := placeXY(after, name, spec.Pos, w, h)
 		if err != nil {
-			s.DestroyOutput(name)
+			s.destroy(name)
 			return "", err
 		}
 		if ok {
@@ -90,7 +100,7 @@ func (s *sway) CreateOutput(spec OutputSpec) (string, error) {
 		}
 	}
 	if err := swaymsg(cmd); err != nil {
-		s.DestroyOutput(name)
+		s.destroy(name)
 		return "", err
 	}
 	return name, nil
@@ -119,14 +129,37 @@ func newOutput(before, after []Output) string {
 	return ""
 }
 
-func (*sway) DestroyOutput(name string) {
-	if name != "" {
-		_ = swaymsg("output " + name + " unplug")
-	}
-	_ = os.Remove(swayState())
+func (s *sway) DestroyOutput(name string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.destroy(name)
 }
 
-func (*sway) WatchLayout(done chan struct{}) {} // no saved layout to defer to
+// destroy unplugs the output and forgets it; s.mu is held.
+func (*sway) destroy(name string) {
+	if name == "" {
+		return
+	}
+	_ = swaymsg("output " + name + " unplug")
+	writeSwayState(slices.DeleteFunc(readSwayState(), func(n string) bool { return n == name }))
+}
+
+func readSwayState() []string {
+	b, _ := os.ReadFile(swayState())
+	return strings.Fields(string(b))
+}
+
+// writeSwayState saves names, or removes the file when there are none.
+func writeSwayState(names []string) {
+	if len(names) == 0 {
+		_ = os.Remove(swayState())
+		return
+	}
+	_ = os.MkdirAll(config.Dir(), 0o700)
+	_ = os.WriteFile(swayState(), []byte(strings.Join(names, "\n")+"\n"), 0o600)
+}
+
+func (*sway) WatchLayout(string, chan struct{}) {} // no saved layout to defer to
 
 // MapInput maps only smon's device, by its identifier.
 func (*sway) MapInput(dev touch.Device, output string) error {

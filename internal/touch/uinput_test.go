@@ -14,12 +14,12 @@ func TestDevicesAppear(t *testing.T) {
 	if os.Getenv("SMON_UINPUT_TEST") != "1" {
 		t.Skip("set SMON_UINPUT_TEST=1 to create real uinput devices")
 	}
-	tch, err := New(1920, 1080)
+	tch, err := New(TouchDevice, 1920, 1080)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer tch.Close()
-	pen, err := NewPen(1920, 1080)
+	pen, err := NewPen(PenDevice, 1920, 1080)
 	if err != nil {
 		t.Fatal(err)
 	}

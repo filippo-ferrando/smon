@@ -48,3 +48,17 @@ func TestSwayReply(t *testing.T) {
 		t.Errorf("pen id = %q", id)
 	}
 }
+
+// The state file lists every output smon made, so a crash with several
+// monitors leaves nothing behind.
+func TestSwayStateFile(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	writeSwayState([]string{"HEADLESS-3", "HEADLESS-4"})
+	if got := readSwayState(); len(got) != 2 || got[1] != "HEADLESS-4" {
+		t.Fatalf("state %v", got)
+	}
+	writeSwayState(nil)
+	if got := readSwayState(); len(got) != 0 {
+		t.Fatalf("empty state kept %v", got)
+	}
+}

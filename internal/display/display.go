@@ -24,6 +24,7 @@ import (
 // Display is a portal screencast of either a new virtual output (extend) or
 // an existing one (mirror).
 type Display struct {
+	N         int // smon's monitor number, 1 for the first
 	W, H, FPS int
 	Codec     *gst.Codec // what Pipeline encodes; nil is H.264
 	virtual   bool
@@ -46,8 +47,15 @@ type Display struct {
 // existing ones (SMON-1 where smon names it); "mirror" duplicates an existing screen. The first run of
 // each mode shows the share picker; its restore token (one per mode) makes
 // later runs silent.
-func New(comp compositor.Compositor, spec compositor.OutputSpec, mode string) (*Display, error) {
-	d := &Display{W: spec.W, H: spec.H, FPS: spec.FPS, comp: comp, virtual: mode == "extend", spec: spec}
+//
+// n numbers smon's monitors from 1: each has its own output name (SMON-n
+// where smon names it), restore token and input devices.
+func New(comp compositor.Compositor, spec compositor.OutputSpec, mode string, n int) (*Display, error) {
+	n = max(n, 1)
+	if spec.Name == "" {
+		spec.Name = compositor.MonitorName(n)
+	}
+	d := &Display{N: n, W: spec.W, H: spec.H, FPS: spec.FPS, comp: comp, virtual: mode == "extend", spec: spec}
 	hint := "smon: in the share picker choose the screen to duplicate"
 	switch mode {
 	case "extend":
@@ -66,13 +74,13 @@ func New(comp compositor.Compositor, spec compositor.OutputSpec, mode string) (*
 		}
 		d.want = name
 		d.done = make(chan struct{})
-		go comp.WatchLayout(d.done)
+		go comp.WatchLayout(name, d.done)
 		hint = "smon: in the share picker choose " + name
 	case "mirror":
 	default:
 		return nil, fmt.Errorf("bad -mode %q (extend|mirror)", mode)
 	}
-	if _, err := os.Stat(tokenPath(mode)); err != nil {
+	if _, err := os.Stat(d.tokenPath(mode)); err != nil {
 		switch comp.Name() {
 		case "hyprland":
 			hint += " and tick \"Allow a restore token\" so later runs skip the picker"
@@ -98,12 +106,12 @@ func (d *Display) Close() {
 	if d.pen != nil {
 		d.pen.Close()
 		d.pen = nil
-		d.comp.UnmapInput(touch.PenDevice)
+		d.comp.UnmapInput(touch.PenDevice.For(d.N))
 	}
 	if d.touch != nil {
 		d.touch.Close()
 		d.touch = nil
-		d.comp.UnmapInput(touch.TouchDevice)
+		d.comp.UnmapInput(touch.TouchDevice.For(d.N))
 	}
 	if d.fd != nil {
 		_ = d.fd.Close()
@@ -122,6 +130,10 @@ func (d *Display) Close() {
 	}
 }
 
+// Output is the name of the captured output ("" when the portal did not
+// say).
+func (d *Display) Output() string { return d.output }
+
 // AtClose registers f to run when the display closes (also on Ctrl-C), in
 // reverse order of registration.
 func (d *Display) AtClose(f func()) { d.cleanup = append(d.cleanup, f) }
@@ -136,23 +148,23 @@ func (d *Display) EnableTouch() (*touch.Touch, *touch.Pen, error) {
 	}
 	// The device first: KWin can only map one that exists. Nothing is
 	// injected before it is mapped.
-	t, err := touch.New(d.W, d.H)
+	t, err := touch.New(touch.TouchDevice.For(d.N), d.W, d.H)
 	if err != nil {
 		return nil, nil, err
 	}
-	if err := d.comp.MapInput(touch.TouchDevice, d.output); err != nil {
+	if err := d.comp.MapInput(touch.TouchDevice.For(d.N), d.output); err != nil {
 		t.Close()
-		d.comp.UnmapInput(touch.TouchDevice)
+		d.comp.UnmapInput(touch.TouchDevice.For(d.N))
 		return nil, nil, err
 	}
 	d.touch = t
 	fmt.Fprintf(os.Stderr, "smon: touch input enabled on %s\n", d.output)
 
-	p, err := touch.NewPen(d.W, d.H)
+	p, err := touch.NewPen(touch.PenDevice.For(d.N), d.W, d.H)
 	if err == nil {
-		if err = d.comp.MapInput(touch.PenDevice, d.output); err != nil {
+		if err = d.comp.MapInput(touch.PenDevice.For(d.N), d.output); err != nil {
 			p.Close()
-			d.comp.UnmapInput(touch.PenDevice)
+			d.comp.UnmapInput(touch.PenDevice.For(d.N))
 		}
 	}
 	if err != nil {
@@ -163,8 +175,15 @@ func (d *Display) EnableTouch() (*touch.Touch, *touch.Pen, error) {
 	return t, p, nil
 }
 
-// tokenPath is where the portal restore token for mode is kept.
-func tokenPath(mode string) string { return filepath.Join(config.Dir(), "restore_token-"+mode) }
+// tokenPath is where the portal restore token for mode is kept: one per mode
+// and monitor (monitor 1's file has no number, as before smon had several).
+func (d *Display) tokenPath(mode string) string {
+	name := "restore_token-" + mode
+	if d.N > 1 {
+		name += fmt.Sprintf("-%d", d.N)
+	}
+	return filepath.Join(config.Dir(), name)
+}
 
 // checkSource makes sure extend mode really captures the virtual output (and
 // not the laptop panel, which would just duplicate it), learns its name when

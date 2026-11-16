@@ -17,6 +17,20 @@ type Device struct {
 	Name            string
 	Vendor, Product uint16
 	Pen             bool // a pen tablet; otherwise a touchscreen (or keyboard)
+	Monitor         int  // the smon monitor it drives; 0 or 1 is the first
+}
+
+// For returns the device for smon's monitor n. Monitor 1 keeps the plain
+// identity; monitor n gets " n" after the name and its own product id
+// (GNOME keys settings by vendor:product), 0x10 apart.
+func (d Device) For(n int) Device {
+	if n <= 1 {
+		return d
+	}
+	d.Name = fmt.Sprintf("%s %d", d.Name, n)
+	d.Product += uint16(0x10 * (n - 1))
+	d.Monitor = n
+	return d
 }
 
 // smon's input devices. They share pid.codes' test vendor id.

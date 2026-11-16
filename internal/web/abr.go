@@ -84,10 +84,13 @@ type rateCtl struct {
 	cur                             int
 	viewers                         map[*bweProbe]struct{}
 	lastDown, lastUp, lastCongested time.Time
+
+	done     chan struct{} // closed by stop: run returns
+	stopOnce sync.Once
 }
 
 func newRateCtl(set func(kbps int), maxKbps int) *rateCtl {
-	return &rateCtl{set: set, max: maxKbps, min: min(max(maxKbps/10, 300), maxKbps), cur: maxKbps, viewers: map[*bweProbe]struct{}{}}
+	return &rateCtl{set: set, max: maxKbps, min: min(max(maxKbps/10, 300), maxKbps), cur: maxKbps, viewers: map[*bweProbe]struct{}{}, done: make(chan struct{})}
 }
 
 // current returns the encoder bitrate now, and the most it may climb to.
@@ -109,11 +112,21 @@ func (r *rateCtl) remove(p *bweProbe) {
 	delete(r.viewers, p)
 }
 
+// run adapts the bitrate every abrTick until stop.
 func (r *rateCtl) run() {
-	for now := range time.Tick(abrTick) {
-		r.tick(now)
+	t := time.NewTicker(abrTick)
+	defer t.Stop()
+	for {
+		select {
+		case now := <-t.C:
+			r.tick(now)
+		case <-r.done:
+			return
+		}
 	}
 }
+
+func (r *rateCtl) stop() { r.stopOnce.Do(func() { close(r.done) }) }
 
 func (r *rateCtl) tick(now time.Time) {
 	r.mu.Lock()

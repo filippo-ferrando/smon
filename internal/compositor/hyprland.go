@@ -71,7 +71,7 @@ func hyprOK(args ...string) error {
 }
 
 func (h *hyprland) CreateOutput(spec OutputSpec) (string, error) {
-	name := OutputName
+	name := spec.name()
 	_, _ = hyprctl("output", "remove", name) // stale output from a crash
 	where := "auto-right"
 	if spec.Pos != "" {
@@ -97,7 +97,7 @@ func (h *hyprland) CreateOutput(spec OutputSpec) (string, error) {
 
 func (*hyprland) DestroyOutput(name string) { _, _ = hyprctl("output", "remove", name) }
 
-func (*hyprland) WatchLayout(done chan struct{}) {} // no saved layout to defer to
+func (*hyprland) WatchLayout(string, chan struct{}) {} // no saved layout to defer to
 
 // hyprGlobalOutput is the option that maps every device of dev's kind.
 func hyprGlobalOutput(dev touch.Device) string {

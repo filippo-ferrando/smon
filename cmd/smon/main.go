@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"sync"
 	"syscall"
 
 	"smon/internal/audio"
@@ -57,7 +58,7 @@ func main() {
 
 	snd := newAudio(o)
 	spec := compositor.OutputSpec{W: o.width, H: o.height, FPS: o.fps, Pos: o.pos, Scale: o.scale}
-	d, err := display.New(comp, spec, o.mode)
+	d, err := display.New(comp, spec, o.mode, 1)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -65,7 +66,8 @@ func main() {
 	if snd != nil {
 		snd.Bind(d)
 	}
-	closeOnSignal(d)
+	open.add(d)
+	closeOnSignal()
 
 	var (
 		tch *touch.Touch
@@ -87,6 +89,13 @@ func main() {
 		log.Print("keyboard input enabled: viewers can type into the desktop")
 	}
 	opts := web.Options{Touch: tch, Pen: pen, Keyboard: kbd, Audio: snd, TLS: o.tls, QR: o.qr, NewToken: o.newToken}
+	if o.monitors > 1 {
+		opts.Monitors = o.monitors
+		opts.NewMonitor = func(n int, portrait bool) (*display.Display, *touch.Touch, *touch.Pen, error) {
+			return newMonitor(comp, spec, codec, o, n, portrait)
+		}
+		opts.CloseMonitor = open.close
+	}
 	switch o.cmd {
 	case "web":
 		err = web.Serve(d, o.addr, o.kbps, opts)
@@ -95,9 +104,72 @@ func main() {
 	default:
 		err = cast.Cast(d, o.target, o.kbps, o.addr, snd)
 	}
-	d.Close()
+	open.close(d)
 	if err != nil {
 		log.Fatal(err)
+	}
+}
+
+// newMonitor makes smon's monitor n for a viewer: like monitor 1, upright
+// when the viewer's screen is.
+func newMonitor(comp compositor.Compositor, spec compositor.OutputSpec, codec *gst.Codec, o options, n int, portrait bool) (*display.Display, *touch.Touch, *touch.Pen, error) {
+	if portrait != (spec.H > spec.W) {
+		spec.W, spec.H = spec.H, spec.W
+	}
+	spec.Name = ""   // SMON-n
+	spec.Pos = o.pos // beside the others, like monitor 1
+	d, err := display.New(comp, spec, o.mode, n)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	d.Codec = codec
+	open.add(d)
+	var (
+		tch *touch.Touch
+		pen *touch.Pen
+	)
+	if o.input {
+		if tch, pen, err = d.EnableTouch(); err != nil {
+			log.Printf("monitor %d: no touch input: %v", n, err)
+		}
+	}
+	return d, tch, pen, nil
+}
+
+// displays are the monitors open now, so a signal closes them all.
+type displays struct {
+	mu  sync.Mutex
+	set map[*display.Display]bool
+}
+
+var open = &displays{set: map[*display.Display]bool{}}
+
+func (o *displays) add(d *display.Display) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.set[d] = true
+}
+
+// close closes d once, whoever gets there first (Serve or a signal).
+func (o *displays) close(d *display.Display) {
+	o.mu.Lock()
+	open := o.set[d]
+	delete(o.set, d)
+	o.mu.Unlock()
+	if open {
+		d.Close()
+	}
+}
+
+func (o *displays) closeAll() {
+	o.mu.Lock()
+	all := make([]*display.Display, 0, len(o.set))
+	for d := range o.set {
+		all = append(all, d)
+	}
+	o.mu.Unlock()
+	for _, d := range all {
+		o.close(d)
 	}
 }
 
@@ -110,13 +182,13 @@ func newAudio(o options) *audio.Audio {
 	return audio.New(!strings.HasPrefix(o.target, "miracast:"))
 }
 
-// closeOnSignal removes the virtual output on Ctrl-C or SIGTERM, then exits.
-func closeOnSignal(d *display.Display) {
+// closeOnSignal removes the virtual outputs on Ctrl-C or SIGTERM, then exits.
+func closeOnSignal() {
 	c := make(chan os.Signal, 1)
 	signal.Notify(c, os.Interrupt, syscall.SIGTERM)
 	go func() {
 		<-c
-		d.Close()
+		open.closeAll()
 		os.Exit(0)
 	}()
 }

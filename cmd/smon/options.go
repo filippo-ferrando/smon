@@ -20,6 +20,7 @@ type options struct {
 	target string // cast only: miracast:..., airplay:... or webos:...
 
 	width, height, fps, kbps int
+	monitors                 int
 	scale                    float64
 	portrait                 bool
 
@@ -51,6 +52,7 @@ func parseArgs(args []string) options {
 	fs.IntVar(&o.fps, "fps", 30, "frame rate")
 	fs.IntVar(&o.kbps, "kbps", 8000, "video bitrate")
 	fs.Float64Var(&o.scale, "scale", 1, "extend: output scale; 2 makes everything twice as big, for a high-DPI tablet")
+	fs.IntVar(&o.monitors, "monitors", 1, "web, extend: up to this many monitors, one per device that connects (1: every device shows the same monitor)")
 	fs.BoolVar(&o.portrait, "portrait", false, "extend: portrait monitor (swaps -w and -h), for a tablet held upright")
 	fs.StringVar(&o.pos, "pos", "", "extend: initial placement right|left|above|below (default: umbriel's saved display layout, the compositor's own placement elsewhere; on umbriel rearranging in the displays plugin always wins)")
 	fs.StringVar(&o.mode, "mode", "extend", "extend: new virtual monitor; mirror: duplicate an existing screen")
@@ -71,6 +73,14 @@ func parseArgs(args []string) options {
 	}
 	if o.mode == "mirror" && (o.scale != 1 || o.portrait) {
 		fmt.Fprintln(os.Stderr, "-scale and -portrait apply to extend mode only")
+		os.Exit(2)
+	}
+	if o.monitors < 1 || o.monitors > 8 {
+		fmt.Fprintf(os.Stderr, "bad -monitors %d (1 to 8)\n", o.monitors)
+		os.Exit(2)
+	}
+	if o.monitors > 1 && (args[0] != "web" || o.mode != "extend") {
+		fmt.Fprintln(os.Stderr, "-monitors works with smon web in extend mode only")
 		os.Exit(2)
 	}
 	if o.portrait && o.width > o.height {
