@@ -13,20 +13,20 @@ func TestEncoderCache(t *testing.T) {
 		t.Fatal("fresh cache not empty")
 	}
 	cands := []string{"vah264enc", "x264enc"}
-	saveEncoderCache(map[string]string{cacheKey(1920, 1080, cands): "x264enc", cacheKey(2560, 1600, cands): "vah264enc"})
+	saveEncoderCache(map[string]string{cacheKey(H264, 1920, 1080, cands): "x264enc", cacheKey(H264, 2560, 1600, cands): "vah264enc"})
 	if _, err := os.Stat(filepath.Join(os.Getenv("XDG_CACHE_HOME"), "smon", "encoder.json")); err != nil {
 		t.Fatal(err)
 	}
-	encPicked[[2]int{1920, 1080}] = "x264enc"
-	ForgetEncoder(1920, 1080)
+	encPicked[keyFor(H264, 1920, 1080)] = "x264enc"
+	ForgetEncoder(H264, 1920, 1080)
 	m := loadEncoderCache()
-	if _, ok := m[cacheKey(1920, 1080, cands)]; ok {
+	if _, ok := m[cacheKey(H264, 1920, 1080, cands)]; ok {
 		t.Error("forgotten pick still saved")
 	}
-	if m[cacheKey(2560, 1600, cands)] != "vah264enc" {
+	if m[cacheKey(H264, 2560, 1600, cands)] != "vah264enc" {
 		t.Error("other size's pick lost")
 	}
-	if _, ok := encPicked[[2]int{1920, 1080}]; ok {
+	if _, ok := encPicked[keyFor(H264, 1920, 1080)]; ok {
 		t.Error("forgotten pick still in memory")
 	}
 }
@@ -34,10 +34,10 @@ func TestEncoderCache(t *testing.T) {
 // A portrait output shares the landscape output's pick.
 func TestSizeKeyPortrait(t *testing.T) {
 	cands := []string{"vah264enc", "x264enc"}
-	if cacheKey(1080, 1920, cands) != cacheKey(1920, 1080, cands) || sizeKey(1600, 2560) != sizeKey(2560, 1600) {
+	if cacheKey(H264, 1080, 1920, cands) != cacheKey(H264, 1920, 1080, cands) || sizeKey(1600, 2560) != sizeKey(2560, 1600) {
 		t.Fatal("portrait and landscape keys differ")
 	}
-	if cacheKey(1920, 1080, cands) != "1920x1080 vah264enc,x264enc" {
-		t.Fatalf("landscape key changed: %q (saved picks would be lost)", cacheKey(1920, 1080, cands))
+	if cacheKey(H264, 1920, 1080, cands) != "1920x1080 vah264enc,x264enc" {
+		t.Fatalf("landscape key changed: %q (saved picks would be lost)", cacheKey(H264, 1920, 1080, cands))
 	}
 }

@@ -14,6 +14,7 @@ import (
 	"smon/internal/cast"
 	"smon/internal/compositor"
 	"smon/internal/display"
+	"smon/internal/gst"
 	"smon/internal/touch"
 	"smon/internal/web"
 )
@@ -28,6 +29,21 @@ func main() {
 	}
 	if o.cmd == "cast" && (o.input || o.keyboard) {
 		log.Fatal("-input and -keyboard work only with web and usb")
+	}
+	codec, err := gst.CodecByName(o.codec)
+	if err != nil {
+		log.Fatal(err)
+	}
+	if codec != gst.H264 {
+		if strings.HasPrefix(o.target, "miracast:") || strings.HasPrefix(o.target, "airplay:") {
+			log.Fatalf("-codec %s: Miracast and AirPlay receivers take H.264 only", codec.Name)
+		}
+		if err := codec.Check(); err != nil {
+			log.Fatal(err)
+		}
+		if strings.HasPrefix(o.target, "webos:") {
+			log.Printf("-codec %s: the TV's browser may not decode it; use -codec h264 if the picture stays black", codec.Name)
+		}
 	}
 	comp, err := compositor.Detect(o.compositor)
 	if err != nil {
@@ -45,6 +61,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	d.Codec = codec
 	if snd != nil {
 		snd.Bind(d)
 	}

@@ -1,4 +1,4 @@
-package h264
+package rtpau
 
 import (
 	"bytes"

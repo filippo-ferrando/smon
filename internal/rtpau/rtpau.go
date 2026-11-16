@@ -1,5 +1,6 @@
-// Package h264 handles H.264 access units in Annex-B form.
-package h264
+// Package rtpau reassembles video access units from RTP: H.264 and H.265 as
+// Annex-B, AV1 as a low-overhead OBU stream (what WebCodecs decodes).
+package rtpau
 
 import (
 	"bytes"
@@ -17,10 +18,21 @@ const (
 	nalFUA   = 28
 )
 
+// Codec is the RTP payload format an Assembler reads.
+type Codec int
+
+const (
+	H264 Codec = iota // RFC 6184
+	H265              // RFC 7798
+	AV1               // AOM's RTP payload format for AV1
+)
+
 // Assembler turns H.264 RTP packets (one access unit per marker bit) into
 // Annex-B access units. It depacketizes straight into the access unit, so an
 // access unit costs one allocation however many packets carry it.
 type Assembler struct {
+	// Codec is the payload format; the zero value is H.264.
+	Codec Codec
 	// Head is the number of zero bytes Push leaves in front of each access
 	// unit, room for a caller's header without copying the access unit again.
 	Head int
@@ -28,11 +40,12 @@ type Assembler struct {
 	Dropped int
 
 	au     []byte
-	key    bool // au holds an IDR slice
-	broken bool // a NAL lost its start: drop au at the marker
-	inFU   bool // inside a fragmented NAL
-	resync bool // after Skip: the partial access unit isn't a loss
-	last   int  // size of the previous access unit, to size the next
+	key    bool   // au holds an IDR slice (H.265: IRAP picture; AV1: sequence header)
+	broken bool   // a NAL lost its start: drop au at the marker
+	inFU   bool   // inside a fragmented NAL (AV1: OBU)
+	obu    []byte // AV1: the OBU being reassembled
+	resync bool   // after Skip: the partial access unit isn't a loss
+	last   int    // size of the previous access unit, to size the next
 	seq    uint16
 	hasSeq bool
 }
@@ -51,7 +64,14 @@ func (a *Assembler) Push(pkt []byte) (au []byte, key bool) {
 		a.broken = true
 	}
 	a.seq, a.hasSeq = p.SequenceNumber, true
-	a.depay(p.Payload)
+	switch a.Codec {
+	case H265:
+		a.depayH265(p.Payload)
+	case AV1:
+		a.depayAV1(p.Payload)
+	default:
+		a.depay(p.Payload)
+	}
 	if !p.Marker {
 		return nil, false
 	}
@@ -82,10 +102,15 @@ func (a *Assembler) Skip(pkt []byte) {
 	a.broken, a.resync = mid, mid
 }
 
-func (a *Assembler) nal(typ byte) {
+// begin makes room for the access unit when its first unit arrives.
+func (a *Assembler) begin() {
 	if a.au == nil {
 		a.au = make([]byte, a.Head, a.Head+a.last+a.last/4+64)
 	}
+}
+
+func (a *Assembler) nal(typ byte) {
+	a.begin()
 	a.key = a.key || typ == nalIDR
 }
 

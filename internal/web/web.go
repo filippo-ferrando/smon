@@ -21,7 +21,8 @@ import (
 	"smon/internal/audio"
 	"smon/internal/config"
 	"smon/internal/display"
-	"smon/internal/h264"
+	"smon/internal/gst"
+	"smon/internal/rtpau"
 	"smon/internal/touch"
 
 	"github.com/gorilla/websocket"
@@ -64,15 +65,16 @@ var viewers atomic.Int64 // namespaces pointer ids per viewer
 // on localhost (adb reverse, which carries only TCP). HTTP and WebRTC media
 // share one port number (TCP + UDP) so a single firewall rule covers both.
 func Serve(d *display.Display, addr string, kbps int, opts Options) error {
-	video, err := webrtc.NewTrackLocalStaticRTP(webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypeH264, ClockRate: 90000}, "video", "smon")
+	vc := codecFor(d.Codec)
+	video, err := webrtc.NewTrackLocalStaticRTP(webrtc.RTPCodecCapability{MimeType: vc.mime, ClockRate: 90000}, "video", "smon")
 	if err != nil {
 		return err
 	}
-	udp, gst, err := d.RTP(kbps, 1200, webGOP*d.FPS)
+	udp, pipe, err := d.RTP(kbps, 1200, webGOP*d.FPS)
 	if err != nil {
 		return err
 	}
-	defer gst.Stop()
+	defer pipe.Stop()
 
 	token, err := loadToken(config.Dir(), opts.NewToken)
 	if err != nil {
@@ -81,15 +83,18 @@ func Serve(d *display.Display, addr string, kbps int, opts Options) error {
 	s := &webServer{
 		token: token,
 		input: &inputs{touch: opts.Touch, pen: opts.Pen, kbd: opts.Keyboard},
-		hub:   &auHub{needKey: gst.Keyframe},
-		peer:  peerHooks{keyframe: gst.Keyframe},
+		hub:   &auHub{needKey: pipe.Keyframe},
+		peer:  peerHooks{keyframe: pipe.Keyframe},
 	}
-	if abrEnabled() {
-		s.peer.abr = newRateCtl(gst.SetBitrate, kbps)
+	s.codec = vc
+	if !gst.LiveBitrate(pipe.Encoder) {
+		log.Printf("adaptive bitrate off: encoder %s can't change bitrate while it runs", pipe.Encoder)
+	} else if abrEnabled() {
+		s.peer.abr = newRateCtl(pipe.SetBitrate, kbps)
 		go s.peer.abr.run()
 	}
 	s.peer.stats = &statsSource{
-		encoder: gst.Encoder, codec: "h264", size: fmt.Sprintf("%dx%d", d.W, d.H),
+		encoder: pipe.Encoder, codec: vc.name, size: fmt.Sprintf("%dx%d", d.W, d.H),
 		fps: d.FPS, kbps: kbps, abr: s.peer.abr,
 	}
 	s.tracks = []webrtc.TrackLocal{video}
@@ -105,8 +110,8 @@ func Serve(d *display.Display, addr string, kbps int, opts Options) error {
 			opts.Audio = nil
 		}
 	}
-	go forwardVideo(udp, video, s.hub)
-	s.page = renderPage(pageFlags{input: opts.Touch != nil, pen: opts.Pen != nil, keyboard: opts.Keyboard != nil, audio: opts.Audio != nil}, token)
+	go forwardVideo(udp, video, s.hub, vc.asm)
+	s.page = renderPage(pageFlags{input: opts.Touch != nil, pen: opts.Pen != nil, keyboard: opts.Keyboard != nil, audio: opts.Audio != nil, codec: vc.name}, token)
 
 	ln, ice, err := listenTCPAndUDP(addr)
 	if err != nil {
@@ -145,7 +150,7 @@ func Serve(d *display.Display, addr string, kbps int, opts Options) error {
 			}
 		}()
 	}
-	go func() { errc <- fmt.Errorf("gstreamer exited: %v", gst.Wait()) }()
+	go func() { errc <- fmt.Errorf("gstreamer exited: %v", pipe.Wait()) }()
 	return <-errc
 }
 
@@ -156,6 +161,7 @@ type webServer struct {
 	page   []byte
 	tracks []webrtc.TrackLocal
 	input  *inputs
+	codec  videoCodec // what the video track carries
 	hub    *auHub
 	peer   peerHooks
 	newPC  func() (*webrtc.PeerConnection, *bweProbe, error) // set before serving
@@ -224,6 +230,10 @@ func (s *webServer) handleOffer(w http.ResponseWriter, r *http.Request) {
 	var offer webrtc.SessionDescription
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10)).Decode(&offer); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if !s.codec.offeredIn(offer.SDP) {
+		http.Error(w, s.codec.unsupported(), http.StatusUnsupportedMediaType)
 		return
 	}
 	answer, err := answerOffer(s.newPC, s.tracks, offer, s.input, s.peer)
@@ -334,11 +344,11 @@ func forwardAudio(udp *net.UDPConn, track *webrtc.TrackLocalStaticRTP, hub *auHu
 	}
 }
 
-// forwardVideo copies H.264 RTP from gstreamer to the WebRTC track, and
+// forwardVideo copies video RTP from gstreamer to the WebRTC track, and
 // whole access units to the WebSocket viewers, until udp closes. With no
 // WebSocket viewer it only forwards packets: no access units to assemble.
-func forwardVideo(udp *net.UDPConn, track *webrtc.TrackLocalStaticRTP, hub *auHub) {
-	asm := h264.Assembler{Head: 1} // room for the flags byte
+func forwardVideo(udp *net.UDPConn, track *webrtc.TrackLocalStaticRTP, hub *auHub, codec rtpau.Codec) {
+	asm := rtpau.Assembler{Codec: codec, Head: 1} // room for the flags byte
 	buf := make([]byte, 1500)
 	for {
 		n, err := udp.Read(buf)
@@ -365,13 +375,19 @@ func forwardVideo(udp *net.UDPConn, track *webrtc.TrackLocalStaticRTP, hub *auHu
 	}
 }
 
-// pageFlags are the viewer features this run turns on.
-type pageFlags struct{ input, pen, keyboard, audio bool }
+// pageFlags are the viewer features this run turns on, and the codec.
+type pageFlags struct {
+	input, pen, keyboard, audio bool
+	codec                       string
+}
 
 // renderPage turns on the page's input and sound support as configured, and
 // fills in the access token its manifest link carries.
 func renderPage(f pageFlags, token string) []byte {
 	page := bytes.ReplaceAll(indexHTML, []byte("{{TOKEN}}"), []byte(token))
+	if f.codec != "" {
+		page = bytes.Replace(page, []byte(`data-codec="h264"`), []byte(`data-codec="`+f.codec+`"`), 1)
+	}
 	for _, on := range []struct {
 		attr string
 		on   bool

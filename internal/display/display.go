@@ -25,6 +25,7 @@ import (
 // an existing one (mirror).
 type Display struct {
 	W, H, FPS int
+	Codec     *gst.Codec // what Pipeline encodes; nil is H.264
 	virtual   bool
 	comp      compositor.Compositor
 	want      string                // extend: the virtual output's name ("" until the portal names it)
@@ -279,7 +280,7 @@ func (d *Display) findOutput(props map[string]dbus.Variant) string {
 const encoderTrial = 10 * time.Second
 
 // Pipeline starts capturing the virtual output, scaling it to w x h at fps,
-// encoding H.264 constrained-baseline with an IDR every gop frames, then
+// encoding it in the display's codec with a keyframe every gop frames, then
 // running tail. It runs in this process so callers can force keyframes and
 // change the bitrate while it plays.
 func (d *Display) Pipeline(kbps, w, h, fps, gop int, tail string) (*gst.Pipeline, error) {
@@ -290,17 +291,16 @@ func (d *Display) Pipeline(kbps, w, h, fps, gop int, tail string) (*gst.Pipeline
 	if err != nil {
 		return nil, err
 	}
-	enc, encName := gst.Encoder(w, h, fps, kbps, gop)
+	codec := d.codec()
+	enc, encName := gst.Encoder(codec, w, h, fps, kbps, gop)
 	src := fmt.Sprintf("pipewiresrc fd=%d path=%d keepalive-time=%d always-copy=true do-timestamp=true", fd, d.node, 1000/d.FPS)
 	if d.capsSized() { // the virtual monitor becomes whatever size we ask for
 		src += fmt.Sprintf(" ! video/x-raw,width=%d,height=%d", d.W, d.H)
 	}
-	p := fmt.Sprintf("%s ! %s ! video/x-h264,profile=constrained-baseline ! "+
-		"h264parse config-interval=-1 ! %s",
-		src, enc, tail)
+	p := fmt.Sprintf("%s ! %s ! %s ! %s", src, enc, codec.Encoded(), tail)
 	g, err := gst.Start(p)
 	if err != nil {
-		gst.ForgetEncoder(w, h) // maybe a saved encoder that no longer works
+		gst.ForgetEncoder(codec, w, h) // maybe a saved encoder that no longer works
 		unix.Close(fd)
 		return nil, err
 	}
@@ -308,7 +308,7 @@ func (d *Display) Pipeline(kbps, w, h, fps, gop int, tail string) (*gst.Pipeline
 	started := time.Now()
 	go func() {
 		if err := g.Wait(); err != nil && time.Since(started) < encoderTrial {
-			gst.ForgetEncoder(w, h)
+			gst.ForgetEncoder(codec, w, h)
 		}
 		unix.Close(fd)
 	}()
@@ -316,7 +316,15 @@ func (d *Display) Pipeline(kbps, w, h, fps, gop int, tail string) (*gst.Pipeline
 	return g, nil
 }
 
-// RTP streams the display as H.264 RTP (one access unit per marker bit) to a
+// codec is what the display encodes to.
+func (d *Display) codec() *gst.Codec {
+	if d.Codec == nil {
+		return gst.H264
+	}
+	return d.Codec
+}
+
+// RTP streams the display as RTP in its codec (one access unit per marker bit) to a
 // localhost UDP socket and returns that socket.
 func (d *Display) RTP(kbps, mtu, gop int) (*net.UDPConn, *gst.Pipeline, error) {
 	udp, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
@@ -324,8 +332,8 @@ func (d *Display) RTP(kbps, mtu, gop int) (*net.UDPConn, *gst.Pipeline, error) {
 		return nil, nil, err
 	}
 	_ = udp.SetReadBuffer(4 << 20) // best effort: the kernel caps it
-	tail := fmt.Sprintf("rtph264pay config-interval=-1 pt=96 mtu=%d aggregate-mode=zero-latency ! udpsink host=127.0.0.1 port=%d sync=false",
-		mtu, udp.LocalAddr().(*net.UDPAddr).Port)
+	tail := fmt.Sprintf("%s ! udpsink host=127.0.0.1 port=%d sync=false",
+		d.codec().Payloader(96, mtu), udp.LocalAddr().(*net.UDPAddr).Port)
 	g, err := d.Pipeline(kbps, d.W, d.H, d.FPS, gop, tail)
 	if err != nil {
 		udp.Close()

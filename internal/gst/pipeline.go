@@ -82,6 +82,7 @@ import "C"
 
 import (
 	"errors"
+	"log"
 	"sync"
 	"time"
 	"unsafe"
@@ -93,7 +94,9 @@ var gstInit sync.Once
 // gst-launch child it can be steered while it plays: forced keyframes when a
 // viewer needs one, and live bitrate changes. The encoder must be named "enc".
 type Pipeline struct {
-	Encoder string // the encoder element, when the caller set it; for display only
+	Encoder string // the encoder element (see Encoder); SetBitrate sets its properties
+
+	rateWarned bool // logged a bitrate property the encoder lacks
 
 	mu   sync.Mutex
 	p    *C.GstElement // nil once the pipeline has ended
@@ -187,18 +190,29 @@ func (g *Pipeline) forceKey() {
 
 // SetBitrate changes the encoder's target bitrate while it plays. For VA-API
 // encoders the rate-control buffer follows, so it stays ~200 ms long.
+// Encoders that cannot change it live (see LiveBitrate) are left alone.
 func (g *Pipeline) SetBitrate(kbps int) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	if g.p == nil {
 		return
 	}
-	set := func(prop string, v int) {
-		name, cprop := C.CString("enc"), C.CString(prop)
-		defer C.free(unsafe.Pointer(name))
-		defer C.free(unsafe.Pointer(cprop))
-		C.smon_set_uint(g.p, name, cprop, C.guint(v))
+	props := bitrateProps(g.Encoder)
+	if g.Encoder == "" {
+		props = []string{"bitrate", "cpb-size"} // unknown encoder: try both
 	}
-	set("bitrate", kbps)
-	set("cpb-size", cpbSize(kbps)) // VA-API only; x264's VBV is in ms already
+	for _, prop := range props {
+		v := kbps
+		if prop == "cpb-size" {
+			v = cpbSize(kbps)
+		}
+		name, cprop := C.CString("enc"), C.CString(prop)
+		ok := C.smon_set_uint(g.p, name, cprop, C.guint(v)) != 0
+		C.free(unsafe.Pointer(name))
+		C.free(unsafe.Pointer(cprop))
+		if !ok && g.Encoder != "" && !g.rateWarned {
+			g.rateWarned = true
+			log.Printf("encoder %s has no %s property: bitrate stays put", g.Encoder, prop)
+		}
+	}
 }

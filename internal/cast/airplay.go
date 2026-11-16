@@ -31,7 +31,7 @@ import (
 
 	"smon/internal/cast/playfair"
 	"smon/internal/display"
-	"smon/internal/h264"
+	"smon/internal/rtpau"
 )
 
 // airplayConn is the RTSP control connection to a receiver.
@@ -317,7 +317,7 @@ func (a *airplayConn) heartbeat(done <-chan struct{}) error {
 
 // mirror reads H.264 RTP from gstreamer and writes AirPlay mirror packets.
 func mirror(udp *net.UDPConn, w io.Writer, stream cipher.Stream, width, height int) error {
-	var asm h264.Assembler
+	var asm rtpau.Assembler
 	var sps, pps []byte
 	buf := make([]byte, 65536)
 	for {
@@ -333,7 +333,7 @@ func mirror(udp *net.UDPConn, w io.Writer, stream cipher.Stream, width, height i
 		// Annex-B AU -> AVCC, pulling SPS/PPS out into a codec packet.
 		var avcc []byte
 		idr, newCodec := false, false
-		for _, n := range h264.SplitAnnexB(au) {
+		for _, n := range rtpau.SplitAnnexB(au) {
 			switch n[0] & 0x1f {
 			case 7:
 				newCodec = newCodec || !bytes.Equal(n, sps)

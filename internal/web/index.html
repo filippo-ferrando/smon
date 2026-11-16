@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en" data-input="0" data-pen="0" data-keyboard="0" data-audio="0">
+<html lang="en" data-input="0" data-pen="0" data-keyboard="0" data-audio="0" data-codec="h264">
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
 <meta name="theme-color" content="#000000">
@@ -48,6 +48,7 @@
 const INPUT = document.documentElement.dataset.input === '1';
 const PEN = document.documentElement.dataset.pen === '1';
 const KEYBOARD = document.documentElement.dataset.keyboard === '1';
+const CODEC = document.documentElement.dataset.codec; // h264, h265 or av1
 const AUDIO = document.documentElement.dataset.audio === '1';
 const v = document.getElementById('v'), c = document.getElementById('c'), a = document.getElementById('a');
 const msg = document.getElementById('msg'), fs = document.getElementById('fs'), bar = document.getElementById('bar');
@@ -114,8 +115,12 @@ async function startRTC() {
 }
 
 // --- WebSocket + WebCodecs (USB via adb reverse: TCP only, localhost is a secure context) ---
-function codecFor(au) { // avc1.PPCCLL from the SPS
-  const h = n => n.toString(16).padStart(2, '0');
+// The WebCodecs codec string. H.264 reads profile and level from the SPS;
+// H.265 (Main) and AV1 (Main, 8-bit) name a level high enough for 4K60.
+function codecFor(au) {
+  if (CODEC === 'h265') return 'hvc1.1.6.L153.B0';
+  if (CODEC === 'av1') return 'av01.0.13M.08';
+  const h = n => n.toString(16).padStart(2, '0'); // avc1.PPCCLL
   for (let i = 0; i + 6 < au.length; i++)
     if (au[i] === 0 && au[i + 1] === 0 && au[i + 2] === 1 && (au[i + 3] & 0x1f) === 7)
       return 'avc1.' + h(au[i + 4]) + h(au[i + 5]) + h(au[i + 6]);
@@ -126,7 +131,7 @@ function startWS() {
   const ctx = c.getContext('2d', { alpha: false, desynchronized: true }); // desynchronized: skip a compositor frame where supported
   const ws = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws${location.search}`);
   ws.binaryType = 'arraybuffer';
-  let dec = null, ts = 0, waitKey = true;
+  let dec = null, ts = 0, waitKey = true, codecChecked = false;
   ws.onopen = () => { if (INPUT || KEYBOARD) send = m => ws.readyState === 1 && ws.send(m); };
   // The periodic keyframe is seconds apart: ask for one whenever decoding has to restart.
   const needKey = () => { if (!waitKey && ws.readyState === 1) ws.send('{"t":"key"}'); waitKey = true; };
@@ -144,7 +149,14 @@ function startWS() {
         },
         error: err => { msg.textContent = 'decoder: ' + err.message; needKey(); },
       });
-      dec.configure({ codec: codecFor(au), optimizeForLatency: true });
+      const config = { codec: codecFor(au), optimizeForLatency: true };
+      if (CODEC !== 'h264' && !codecChecked) { // can this browser decode it at all?
+        codecChecked = true;
+        VideoDecoder.isConfigSupported(config).then(r => {
+          if (!r.supported) { msg.textContent = `error: this browser can't decode ${CODEC.toUpperCase()} video: restart smon with -codec h264`; ws.onclose = null; ws.close(); }
+        }).catch(() => {});
+      }
+      dec.configure(config);
     }
     if (dec.decodeQueueSize > 3) needKey(); // falling behind: skip to the next keyframe
     if (waitKey && !key) return;
