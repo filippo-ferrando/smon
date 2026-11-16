@@ -87,6 +87,43 @@ prints a URL for the tethering interface too.
 - USB: `adb` (android-tools)
 - Touch input: write access to `/dev/uinput` (for example a `uaccess` udev rule, or the `input` group)
 
+### Arch Linux packages
+
+Build:
+
+```
+sudo pacman -S --needed go gcc
+```
+
+Runtime (core: capture, encoding, web/USB streaming, audio):
+
+```
+sudo pacman -S --needed pipewire pipewire-pulse libpulse \
+    gstreamer gst-plugins-base gst-plugins-good gst-plugins-bad-libs \
+    gst-plugin-pipewire gst-plugin-va gst-plugins-ugly gst-libav
+```
+
+| Package | Provides |
+|---|---|
+| `gst-plugin-pipewire` | `pipewiresrc` (screen capture) |
+| `gst-plugin-va` | `vah264enc` (hardware H.264; needs a VA-API driver such as `intel-media-driver` or `libva-mesa-driver`) |
+| `gst-plugins-ugly` | `x264enc` (software fallback when VA-API is missing) |
+| `gst-plugins-bad-libs` | `h264parse`, `mpegtsmux` |
+| `gst-plugins-good` | `rtph264pay`, `rtpmp2tpay`, `rtpopuspay`, `pulsesrc`, `aacparse`, `udpsink` |
+| `gst-plugins-base` | `opusenc`, `videoconvert`, `videoscale`, `audioconvert` |
+| `gst-libav` | `avenc_aac` (Miracast audio) |
+| `libpulse` | `pactl` |
+
+Optional, per feature:
+
+```
+sudo pacman -S --needed android-tools                 # smon usb
+sudo pacman -S --needed networkmanager dnsmasq        # Miracast
+sudo pacman -S --needed avahi                         # AirPlay discovery (enable avahi-daemon.service)
+```
+
+umbriel and xdg-desktop-portal-umbriel must be installed as well.
+
 ## Firewall
 
 - Miracast: the sink connects to us on **TCP 7236**. With ufw: `sudo ufw allow 7236/tcp`.
