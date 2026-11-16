@@ -1,6 +1,10 @@
 package compositor
 
-import "testing"
+import (
+	"testing"
+
+	"smon/internal/touch"
+)
 
 const swayOutputsJSON = `[
  {"name":"eDP-1","active":true,"rect":{"x":0,"y":0,"width":1440,"height":900},"scale":2.0,"transform":"normal"},
@@ -37,7 +41,10 @@ func TestSwayReply(t *testing.T) {
 	if err := swayReply([]byte(`[{"success":true}]`)); err != nil {
 		t.Errorf("got %v", err)
 	}
-	if swayTouch != "4617:21312:smon_touchscreen" {
-		t.Errorf("swayTouch = %q", swayTouch)
+	if id := touch.TouchDevice.Sway(); id != "4617:21312:smon_touchscreen" {
+		t.Errorf("touchscreen id = %q", id)
+	}
+	if id := touch.PenDevice.Sway(); id != "4617:21313:smon_pen" {
+		t.Errorf("pen id = %q", id)
 	}
 }

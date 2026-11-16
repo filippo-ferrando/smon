@@ -3,10 +3,6 @@
 package touch
 
 import (
-	"encoding/binary"
-	"fmt"
-	"log"
-	"os"
 	"sync"
 	"unsafe"
 
@@ -188,12 +184,11 @@ const (
 )
 
 // Touch is a virtual uinput touchscreen sized w x h. The compositor maps it to
-// one output (see compositor.MapTouch).
+// one output (see compositor.MapInput).
 type Touch struct {
-	mu     sync.Mutex
-	f      *os.File
-	st     *touchState
-	warned bool
+	mu sync.Mutex
+	w  writer
+	st *touchState
 }
 
 func ioctlInt(fd uintptr, req uint, v int) error {
@@ -209,91 +204,25 @@ func ioctlPtr(fd uintptr, req uint, p unsafe.Pointer) error {
 
 // New creates the uinput touchscreen, w x h units in size.
 func New(w, h int) (*Touch, error) {
-	f, err := os.OpenFile("/dev/uinput", os.O_WRONLY|unix.O_NONBLOCK, 0)
-	if err != nil {
-		return nil, fmt.Errorf("touch input needs write access to /dev/uinput: %w", err)
-	}
-	fd := f.Fd()
-	fail := func(what string, err error) (*Touch, error) {
-		_ = f.Close()
-		return nil, fmt.Errorf("uinput %s: %w", what, err)
-	}
-	for _, b := range []struct {
-		req uint
-		v   int
-	}{
-		{uiSetEvBit, evSyn},
-		{uiSetEvBit, evKey},
-		{uiSetEvBit, evAbs},
-		{uiSetKeyBit, btnTouch},
-		{uiSetAbsBit, absX},
-		{uiSetAbsBit, absY},
-		{uiSetAbsBit, absMTSlot},
-		{uiSetAbsBit, absMTTrackID},
-		{uiSetAbsBit, absMTPositionX},
-		{uiSetAbsBit, absMTPositionY},
-		{uiSetPropBit, inputPropDirect},
-	} {
-		if err := ioctlInt(fd, b.req, b.v); err != nil {
-			return fail("set bit", err)
-		}
-	}
-	// struct uinput_abs_setup { __u16 code; struct input_absinfo { s32 value, min, max, fuzz, flat, res; } }
-	abs := func(code uint16, maxv, res int32) error {
-		var b [28]byte
-		binary.LittleEndian.PutUint16(b[0:], code)
-		binary.LittleEndian.PutUint32(b[4+8:], uint32(maxv)) // maximum
-		binary.LittleEndian.PutUint32(b[4+20:], uint32(res)) // resolution (units/mm)
-		return ioctlPtr(fd, uiAbsSetup, unsafe.Pointer(&b[0]))
-	}
 	const res = 10 // nominal; only needs to be nonzero
-	for _, a := range []struct {
-		code uint16
-		max  int32
-		res  int32
-	}{
-		{absX, int32(w - 1), res},
-		{absY, int32(h - 1), res},
-		{absMTPositionX, int32(w - 1), res},
-		{absMTPositionY, int32(h - 1), res},
-		{absMTSlot, touchSlots - 1, 0},
-		{absMTTrackID, 0xffff, 0},
-	} {
-		if err := abs(a.code, a.max, a.res); err != nil {
-			return fail("abs setup", err)
-		}
+	f, err := create(spec{
+		dev:  TouchDevice,
+		evs:  []int{evSyn, evKey, evAbs},
+		keys: []uint16{btnTouch},
+		abs: []absAxis{
+			{absX, 0, int32(w - 1), res},
+			{absY, 0, int32(h - 1), res},
+			{absMTPositionX, 0, int32(w - 1), res},
+			{absMTPositionY, 0, int32(h - 1), res},
+			{absMTSlot, 0, touchSlots - 1, 0},
+			{absMTTrackID, 0, 0xffff, 0},
+		},
+		props: []int{inputPropDirect},
+	})
+	if err != nil {
+		return nil, err
 	}
-	// struct uinput_setup { struct input_id { u16 bustype, vendor, product, version; } char name[80]; u32 ff_effects_max; }
-	var setup [92]byte
-	binary.LittleEndian.PutUint16(setup[0:], busVirtual)
-	binary.LittleEndian.PutUint16(setup[2:], Vendor)
-	binary.LittleEndian.PutUint16(setup[4:], Product)
-	binary.LittleEndian.PutUint16(setup[6:], 1)
-	copy(setup[8:87], Name)
-	if err := ioctlPtr(fd, uiDevSetup, unsafe.Pointer(&setup[0])); err != nil {
-		return fail("dev setup", err)
-	}
-	if err := ioctlPtr(fd, uiDevCreate, nil); err != nil {
-		return fail("dev create", err)
-	}
-	return &Touch{f: f, st: newTouchState(w, h)}, nil
-}
-
-func (t *Touch) write(evs []ev) {
-	if len(evs) == 0 {
-		return
-	}
-	buf := make([]byte, 0, 24*len(evs))
-	for _, e := range evs { // struct input_event (64-bit): timeval[16], u16 type, u16 code, s32 value
-		buf = append(buf, make([]byte, 16)...)
-		buf = binary.LittleEndian.AppendUint16(buf, e.typ)
-		buf = binary.LittleEndian.AppendUint16(buf, e.code)
-		buf = binary.LittleEndian.AppendUint32(buf, uint32(e.val))
-	}
-	if _, err := t.f.Write(buf); err != nil && !t.warned {
-		t.warned = true
-		log.Printf("touch: uinput write: %v", err)
-	}
+	return &Touch{w: writer{f: f, name: "touch"}, st: newTouchState(w, h)}, nil
 }
 
 // Event injects pointer id's event from viewer owner; x, y are normalised to
@@ -301,21 +230,20 @@ func (t *Touch) write(evs []ev) {
 func (t *Touch) Event(owner int, kind byte, id int, x, y float64) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	t.write(t.st.events(kind, owner<<16|id&0xffff, x, y))
+	t.w.write(t.st.events(kind, owner<<16|id&0xffff, x, y))
 }
 
 // Release lifts all contacts of viewer owner.
 func (t *Touch) Release(owner int) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	t.write(t.st.release(func(id int) bool { return id>>16 == owner }))
+	t.w.write(t.st.release(func(id int) bool { return id>>16 == owner }))
 }
 
 // Close lifts every contact and removes the device.
 func (t *Touch) Close() {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	t.write(t.st.release(nil))
-	_ = ioctlPtr(t.f.Fd(), uiDevDestroy, nil)
-	_ = t.f.Close()
+	t.w.write(t.st.release(nil))
+	t.w.destroy()
 }

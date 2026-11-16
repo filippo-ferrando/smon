@@ -65,7 +65,7 @@ func TestIconPNG(t *testing.T) {
 }
 
 func TestRenderPageToken(t *testing.T) {
-	p := string(renderPage(true, false, "abc"))
+	p := string(renderPage(pageFlags{input: true}, "abc"))
 	if strings.Contains(p, "{{TOKEN}}") || !strings.Contains(p, "manifest.webmanifest?t=abc") || !strings.Contains(p, `data-input="1"`) {
 		t.Fatal("page not rendered")
 	}

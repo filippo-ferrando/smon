@@ -54,9 +54,9 @@ const (
 	kwinInputIface = "org.kde.KWin.InputDevice"
 )
 
-// MapTouch finds smon's touchscreen among KWin's input devices (it shows up
+// MapInput finds smon's device among KWin's input devices (it shows up
 // shortly after uinput creates it) and sets its outputName.
-func (*kde) MapTouch(output string) error {
+func (*kde) MapInput(dev touch.Device, output string) error {
 	conn, err := dbus.ConnectSessionBus()
 	if err != nil {
 		return err
@@ -64,26 +64,26 @@ func (*kde) MapTouch(output string) error {
 	defer conn.Close()
 	deadline := time.Now().Add(3 * time.Second)
 	for {
-		path, err := kwinTouchDevice(conn)
+		path, err := kwinDevice(conn, dev.Name)
 		if err != nil {
 			return err
 		}
 		if path != "" {
 			if err := conn.Object(kwinDest, path).SetProperty(kwinInputIface+".outputName", output); err != nil {
-				return fmt.Errorf("KWin: map %s to %s: %w", touch.Name, output, err)
+				return fmt.Errorf("KWin: map %s to %s: %w", dev.Name, output, err)
 			}
 			return nil
 		}
 		if time.Now().After(deadline) {
-			return fmt.Errorf("KWin did not list %q among its input devices", touch.Name)
+			return fmt.Errorf("KWin did not list %q among its input devices", dev.Name)
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
 }
 
-// kwinTouchDevice returns the D-Bus path of smon's touchscreen, or "" while
-// KWin does not know it yet.
-func kwinTouchDevice(conn *dbus.Conn) (dbus.ObjectPath, error) {
+// kwinDevice returns the D-Bus path of the input device called name, or ""
+// while KWin does not know it yet.
+func kwinDevice(conn *dbus.Conn, name string) (dbus.ObjectPath, error) {
 	v, err := conn.Object(kwinDest, kwinInputPath).GetProperty("org.kde.KWin.InputDeviceManager.devicesSysNames")
 	if err != nil {
 		return "", fmt.Errorf("KWin input devices: %w", err)
@@ -92,20 +92,20 @@ func kwinTouchDevice(conn *dbus.Conn) (dbus.ObjectPath, error) {
 	for _, sys := range names {
 		path := dbus.ObjectPath(kwinInputPath + "/" + sys)
 		n, err := conn.Object(kwinDest, path).GetProperty(kwinInputIface + ".name")
-		if err == nil && n.Value() == touch.Name {
+		if err == nil && n.Value() == name {
 			return path, nil
 		}
 	}
 	return "", nil
 }
 
-// UnmapTouch removes the mapping KWin saved in kcminputrc for smon's
-// touchscreen; the device itself is already gone.
-func (*kde) UnmapTouch() {
+// UnmapInput removes the mapping KWin saved in kcminputrc for smon's device;
+// the device itself is already gone.
+func (*kde) UnmapInput(dev touch.Device) {
 	for _, key := range []string{"OutputUuid", "OutputName"} {
 		_ = exec.Command("kwriteconfig6", "--file", "kcminputrc",
-			"--group", "Libinput", "--group", strconv.Itoa(touch.Vendor), "--group", strconv.Itoa(touch.Product),
-			"--group", touch.Name, "--key", key, "--delete").Run()
+			"--group", "Libinput", "--group", strconv.Itoa(int(dev.Vendor)), "--group", strconv.Itoa(int(dev.Product)),
+			"--group", dev.Name, "--key", key, "--delete").Run()
 	}
 }
 

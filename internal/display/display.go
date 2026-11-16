@@ -6,6 +6,7 @@ package display
 import (
 	"errors"
 	"fmt"
+	"log"
 	"net"
 	"os"
 	"path/filepath"
@@ -32,6 +33,7 @@ type Display struct {
 	before    []compositor.Output // extend, portal-made: the outputs before it existed
 	output    string              // captured output name (the virtual one, or the mirrored screen)
 	touch     *touch.Touch        // virtual touchscreen, if input is enabled
+	pen       *touch.Pen          // virtual pen tablet, if input is enabled
 	cleanup   []func()            // extra teardown, run by Close
 	done      chan struct{}       // stops the layout watcher
 	node      uint32
@@ -89,10 +91,15 @@ func (d *Display) Close() {
 		d.cleanup[i]()
 	}
 	d.cleanup = nil
+	if d.pen != nil {
+		d.pen.Close()
+		d.pen = nil
+		d.comp.UnmapInput(touch.PenDevice)
+	}
 	if d.touch != nil {
 		d.touch.Close()
 		d.touch = nil
-		d.comp.UnmapTouch()
+		d.comp.UnmapInput(touch.TouchDevice)
 	}
 	if d.fd != nil {
 		_ = d.fd.Close()
@@ -115,26 +122,41 @@ func (d *Display) Close() {
 // reverse order of registration.
 func (d *Display) AtClose(f func()) { d.cleanup = append(d.cleanup, f) }
 
-// EnableTouch creates a virtual touchscreen mapped to the captured output and
-// returns it; viewer touches injected into it land on that output.
-func (d *Display) EnableTouch() (*touch.Touch, error) {
+// EnableTouch creates a virtual touchscreen and pen tablet mapped to the
+// captured output and returns them; viewer touches and pen strokes injected
+// into them land on that output. The pen is optional: if it cannot be
+// mapped, touch still works and pen is nil.
+func (d *Display) EnableTouch() (*touch.Touch, *touch.Pen, error) {
 	if d.output == "" {
-		return nil, errors.New("touch input: the portal did not say which output is shared")
+		return nil, nil, errors.New("touch input: the portal did not say which output is shared")
 	}
 	// The device first: KWin can only map one that exists. Nothing is
 	// injected before it is mapped.
 	t, err := touch.New(d.W, d.H)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	if err := d.comp.MapTouch(d.output); err != nil {
+	if err := d.comp.MapInput(touch.TouchDevice, d.output); err != nil {
 		t.Close()
-		d.comp.UnmapTouch()
-		return nil, err
+		d.comp.UnmapInput(touch.TouchDevice)
+		return nil, nil, err
 	}
 	d.touch = t
 	fmt.Fprintf(os.Stderr, "smon: touch input enabled on %s\n", d.output)
-	return t, nil
+
+	p, err := touch.NewPen(d.W, d.H)
+	if err == nil {
+		if err = d.comp.MapInput(touch.PenDevice, d.output); err != nil {
+			p.Close()
+			d.comp.UnmapInput(touch.PenDevice)
+		}
+	}
+	if err != nil {
+		log.Printf("pen input off: %v", err)
+		return t, nil, nil
+	}
+	d.pen = p
+	return t, p, nil
 }
 
 // tokenPath is where the portal restore token for mode is kept.

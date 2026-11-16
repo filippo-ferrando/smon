@@ -7,6 +7,8 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+
+	"smon/internal/touch"
 )
 
 // OutputName is the virtual output smon creates in extend mode where the
@@ -25,10 +27,11 @@ type Compositor interface {
 	DestroyOutput(name string)
 	// WatchLayout runs until done is closed; a no-op where it does not apply.
 	WatchLayout(done chan struct{})
-	// MapTouch maps smon's virtual touchscreen, which already exists, to an
-	// output; UnmapTouch undoes it after the touchscreen is gone.
-	MapTouch(output string) error
-	UnmapTouch()
+	// MapInput maps one of smon's virtual input devices (touchscreen or pen),
+	// which already exists, to an output; UnmapInput undoes it after the
+	// device is gone.
+	MapInput(dev touch.Device, output string) error
+	UnmapInput(dev touch.Device)
 	Outputs() ([]Output, error)
 }
 

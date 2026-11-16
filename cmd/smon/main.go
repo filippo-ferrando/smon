@@ -26,8 +26,8 @@ func main() {
 		}
 		return
 	}
-	if o.cmd == "cast" && o.input {
-		log.Fatal("-input works only with web and usb")
+	if o.cmd == "cast" && (o.input || o.keyboard) {
+		log.Fatal("-input and -keyboard work only with web and usb")
 	}
 	comp, err := compositor.Detect(o.compositor)
 	if err != nil {
@@ -49,14 +49,26 @@ func main() {
 	}
 	closeOnSignal(d)
 
-	var tch *touch.Touch
+	var (
+		tch *touch.Touch
+		pen *touch.Pen
+		kbd *touch.Keyboard
+	)
 	if o.input {
-		if tch, err = d.EnableTouch(); err != nil {
+		if tch, pen, err = d.EnableTouch(); err != nil {
 			d.Close()
 			log.Fatal(err)
 		}
 	}
-	opts := web.Options{Touch: tch, Audio: snd, TLS: o.tls, QR: o.qr, NewToken: o.newToken}
+	if o.keyboard {
+		if kbd, err = touch.NewKeyboard(); err != nil {
+			d.Close()
+			log.Fatal(err)
+		}
+		d.AtClose(kbd.Close)
+		log.Print("keyboard input enabled: viewers can type into the desktop")
+	}
+	opts := web.Options{Touch: tch, Pen: pen, Keyboard: kbd, Audio: snd, TLS: o.tls, QR: o.qr, NewToken: o.newToken}
 	switch o.cmd {
 	case "web":
 		err = web.Serve(d, o.addr, o.kbps, opts)

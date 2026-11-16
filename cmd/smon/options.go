@@ -26,6 +26,7 @@ type options struct {
 	addr       string
 	compositor string
 	input      bool
+	keyboard   bool
 	audio      bool
 	tls        bool
 	qr         bool
@@ -49,7 +50,8 @@ func parseArgs(args []string) options {
 	fs.StringVar(&o.pos, "pos", "", "extend: initial placement right|left|above|below (default: umbriel's saved display layout, the compositor's own placement elsewhere; on umbriel rearranging in the displays plugin always wins)")
 	fs.StringVar(&o.mode, "mode", "extend", "extend: new virtual monitor; mirror: duplicate an existing screen")
 	fs.StringVar(&o.addr, "addr", ":8080", "web/webos: listen address (TCP and UDP); usb: only the port is used")
-	fs.BoolVar(&o.input, "input", false, "web/usb: viewer touches control the shared screen (anyone with the URL can)")
+	fs.BoolVar(&o.input, "input", false, "web/usb: viewer touches and pen strokes control the shared screen (anyone with the URL can)")
+	fs.BoolVar(&o.keyboard, "keyboard", false, "web/usb: viewers can type into the desktop (anyone with the URL can)")
 	fs.StringVar(&o.compositor, "compositor", "", "umbriel|hyprland|sway|kde (default: detected from the session)")
 	fs.BoolVar(&o.audio, "audio", true, "add a \"Second Monitor (smon)\" sound output while streaming; what you play there reaches the receiver (not airplay)")
 	fs.BoolVar(&o.tls, "tls", true, "web: serve the viewer over HTTPS with smon's own certificate (needed for app install and keeping the screen awake)")

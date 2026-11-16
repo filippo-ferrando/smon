@@ -46,32 +46,18 @@ var indexHTML []byte
 
 // Options configures Serve.
 type Options struct {
-	Touch *touch.Touch                       // viewer touches drive this; nil keeps viewers view-only
-	Audio *audio.Audio                       // sound sent to the smon output device; nil: video only
-	Ready func(port int, token string) error // runs once the server is up
+	Touch    *touch.Touch                       // viewer touches drive this; nil: no touch
+	Pen      *touch.Pen                         // viewer pens drive this; nil: no pen
+	Keyboard *touch.Keyboard                    // viewer keys drive this; nil: no keyboard
+	Audio    *audio.Audio                       // sound sent to the smon output device; nil: video only
+	Ready    func(port int, token string) error // runs once the server is up
 
 	TLS      bool // serve HTTPS with smon's own certificate (see tls.go)
 	QR       bool // print the viewer URL as a QR code too, on a terminal
 	NewToken bool // replace the saved access token with a new one
 }
 
-// inputMsg is one viewer pointer event: t is d(own), m(ove) or u(p); x, y are
-// normalised to the shared screen.
-type inputMsg struct {
-	T    string
-	ID   int
-	X, Y float64
-}
-
 var viewers atomic.Int64 // namespaces pointer ids per viewer
-
-func handleInput(t *touch.Touch, owner int, data []byte) {
-	var m inputMsg
-	if json.Unmarshal(data, &m) != nil || len(m.T) != 1 {
-		return
-	}
-	t.Event(owner, m.T[0], m.ID, m.X, m.Y)
-}
 
 // Serve streams the display to any browser that opens the printed URL:
 // over WebRTC, or over a WebSocket decoded with WebCodecs when the page is
@@ -94,7 +80,7 @@ func Serve(d *display.Display, addr string, kbps int, opts Options) error {
 	}
 	s := &webServer{
 		token: token,
-		touch: opts.Touch,
+		input: &inputs{touch: opts.Touch, pen: opts.Pen, kbd: opts.Keyboard},
 		hub:   &auHub{needKey: gst.Keyframe},
 		peer:  peerHooks{keyframe: gst.Keyframe},
 	}
@@ -120,7 +106,7 @@ func Serve(d *display.Display, addr string, kbps int, opts Options) error {
 		}
 	}
 	go forwardVideo(udp, video, s.hub)
-	s.page = renderPage(opts.Touch != nil, opts.Audio != nil, token)
+	s.page = renderPage(pageFlags{input: opts.Touch != nil, pen: opts.Pen != nil, keyboard: opts.Keyboard != nil, audio: opts.Audio != nil}, token)
 
 	ln, ice, err := listenTCPAndUDP(addr)
 	if err != nil {
@@ -169,7 +155,7 @@ type webServer struct {
 	caDER  []byte // smon's CA certificate, served at /ca.crt; nil without TLS
 	page   []byte
 	tracks []webrtc.TrackLocal
-	touch  *touch.Touch
+	input  *inputs
 	hub    *auHub
 	peer   peerHooks
 	newPC  func() (*webrtc.PeerConnection, *bweProbe, error) // set before serving
@@ -240,7 +226,7 @@ func (s *webServer) handleOffer(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	answer, err := answerOffer(s.newPC, s.tracks, offer, s.touch, s.peer)
+	answer, err := answerOffer(s.newPC, s.tracks, offer, s.input, s.peer)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -281,13 +267,13 @@ func (s *webServer) handleWS(w http.ResponseWriter, r *http.Request) {
 			}
 			if bytes.Equal(msg, wsKeyRequest) { // the client's decoder lost sync
 				s.peer.keyframe()
-			} else if s.touch != nil {
-				handleInput(s.touch, owner, msg)
+			} else if s.input.enabled() {
+				s.input.handle(owner, msg)
 			}
 		}
 	}()
-	if s.touch != nil {
-		defer s.touch.Release(owner)
+	if s.input.enabled() {
+		defer s.input.release(owner)
 	}
 	for {
 		var m []byte
@@ -379,15 +365,20 @@ func forwardVideo(udp *net.UDPConn, track *webrtc.TrackLocalStaticRTP, hub *auHu
 	}
 }
 
-// renderPage turns on the page's touch and sound support as configured, and
+// pageFlags are the viewer features this run turns on.
+type pageFlags struct{ input, pen, keyboard, audio bool }
+
+// renderPage turns on the page's input and sound support as configured, and
 // fills in the access token its manifest link carries.
-func renderPage(input, audio bool, token string) []byte {
+func renderPage(f pageFlags, token string) []byte {
 	page := bytes.ReplaceAll(indexHTML, []byte("{{TOKEN}}"), []byte(token))
-	if input {
-		page = bytes.Replace(page, []byte(`data-input="0"`), []byte(`data-input="1"`), 1)
-	}
-	if audio {
-		page = bytes.Replace(page, []byte(`data-audio="0"`), []byte(`data-audio="1"`), 1)
+	for _, on := range []struct {
+		attr string
+		on   bool
+	}{{"input", f.input}, {"pen", f.pen}, {"keyboard", f.keyboard}, {"audio", f.audio}} {
+		if on.on {
+			page = bytes.Replace(page, []byte(`data-`+on.attr+`="0"`), []byte(`data-`+on.attr+`="1"`), 1)
+		}
 	}
 	return page
 }
@@ -417,7 +408,7 @@ type peerHooks struct {
 
 // answerOffer creates a peer connection for one viewer, sending tracks, and
 // returns its answer with every ICE candidate in it (no trickle).
-func answerOffer(newPC func() (*webrtc.PeerConnection, *bweProbe, error), tracks []webrtc.TrackLocal, offer webrtc.SessionDescription, tch *touch.Touch, hooks peerHooks) (*webrtc.SessionDescription, error) {
+func answerOffer(newPC func() (*webrtc.PeerConnection, *bweProbe, error), tracks []webrtc.TrackLocal, offer webrtc.SessionDescription, in *inputs, hooks peerHooks) (*webrtc.SessionDescription, error) {
 	pc, bwe, err := newPC()
 	if err != nil {
 		return nil, err
@@ -439,9 +430,9 @@ func answerOffer(newPC func() (*webrtc.PeerConnection, *bweProbe, error), tracks
 		switch {
 		case dc.Label() == "ctl" && hooks.stats != nil:
 			dc.OnOpen(func() { go sendStats(dc, hooks.stats) })
-		case dc.Label() == "input" && tch != nil: // without -input the channel is never read
-			dc.OnMessage(func(m webrtc.DataChannelMessage) { handleInput(tch, owner, m.Data) })
-			dc.OnClose(func() { tch.Release(owner) })
+		case dc.Label() == "input" && in.enabled(): // without -input/-keyboard the channel is never read
+			dc.OnMessage(func(m webrtc.DataChannelMessage) { in.handle(owner, m.Data) })
+			dc.OnClose(func() { in.release(owner) })
 		}
 	})
 	var counted atomic.Bool // in the viewer count while connected
@@ -460,8 +451,8 @@ func answerOffer(newPC func() (*webrtc.PeerConnection, *bweProbe, error), tracks
 				hooks.stats.viewers.Add(1)
 			}
 		case webrtc.PeerConnectionStateFailed, webrtc.PeerConnectionStateClosed, webrtc.PeerConnectionStateDisconnected:
-			if tch != nil {
-				tch.Release(owner)
+			if in.enabled() {
+				in.release(owner)
 			}
 			if hooks.abr != nil && bwe != nil {
 				hooks.abr.remove(bwe)

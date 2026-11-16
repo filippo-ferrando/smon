@@ -21,10 +21,6 @@ type sway struct{}
 // Name implements compositor.
 func (*sway) Name() string { return "sway" }
 
-// swayTouch is smon's touchscreen as Sway identifies input devices:
-// vendor:product:name, decimal ids, spaces in the name as underscores.
-var swayTouch = fmt.Sprintf("%d:%d:%s", touch.Vendor, touch.Product, strings.ReplaceAll(touch.Name, " ", "_"))
-
 // swayState remembers the output smon created, so a run after a crash can
 // remove it: its name differs every time.
 func swayState() string { return filepath.Join(config.Dir(), "sway-output") }
@@ -122,14 +118,16 @@ func (*sway) DestroyOutput(name string) {
 
 func (*sway) WatchLayout(done chan struct{}) {} // no saved layout to defer to
 
-// MapTouch maps only smon's touchscreen, by its identifier.
-func (*sway) MapTouch(output string) error {
-	return swaymsg(fmt.Sprintf("input %s map_to_output %s", swayTouch, output))
+// MapInput maps only smon's device, by its identifier.
+func (*sway) MapInput(dev touch.Device, output string) error {
+	return swaymsg(fmt.Sprintf("input %s map_to_output %s", dev.Sway(), output))
 }
 
-// UnmapTouch resets the stored rule, so a later device with the same name
+// UnmapInput resets the stored rule, so a later device with the same name
 // spans the whole layout again.
-func (*sway) UnmapTouch() { _ = swaymsg(fmt.Sprintf("input %s map_to_output *", swayTouch)) }
+func (*sway) UnmapInput(dev touch.Device) {
+	_ = swaymsg(fmt.Sprintf("input %s map_to_output *", dev.Sway()))
+}
 
 func (*sway) Outputs() ([]Output, error) {
 	out, err := exec.Command("swaymsg", "-r", "-t", "get_outputs").Output()

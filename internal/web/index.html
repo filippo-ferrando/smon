@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en" data-input="0" data-audio="0">
+<html lang="en" data-input="0" data-pen="0" data-keyboard="0" data-audio="0">
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
 <meta name="theme-color" content="#000000">
@@ -22,6 +22,7 @@
   #bar button[hidden] { display: none; }
   #stats { position: fixed; top: 60px; right: 8px; padding: 8px 10px; border-radius: 8px; background: rgba(0,0,0,.75);
     color: #d8f0d8; font: 12px/1.45 ui-monospace, monospace; white-space: pre; pointer-events: none; display: none; }
+  #kbin { position: fixed; left: -1000px; top: 0; width: 10px; height: 10px; opacity: 0; }
   #trust { position: fixed; bottom: 8px; right: 8px; max-width: 22em; padding: 8px 10px; border-radius: 8px;
     background: rgba(40,40,40,.85); color: #ddd; font: 13px system-ui, sans-serif; display: none; }
   #trust a { color: #8cc4ff; }
@@ -36,13 +37,17 @@
 <div id="trust">To install this viewer as an app, trust smon's certificate once:
   <a href="ca.crt">download it</a>, then install it in the device settings (see smon's docs). <a href="#" id="trustx">Dismiss</a></div>
 <div id="stats"></div>
+<textarea id="kbin" autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false" aria-hidden="true"></textarea>
 <div id="bar">
   <button id="inst" hidden aria-label="Install as an app"><svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></svg></button>
+  <button id="kb" hidden aria-label="Show the on-screen keyboard"><svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M7 14h10"/></svg></button>
   <button id="info" aria-label="Show stream stats"><svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7.5v.5"/></svg></button>
   <button id="fs" aria-label="Toggle fullscreen"><svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></button>
 </div>
 <script>
 const INPUT = document.documentElement.dataset.input === '1';
+const PEN = document.documentElement.dataset.pen === '1';
+const KEYBOARD = document.documentElement.dataset.keyboard === '1';
 const AUDIO = document.documentElement.dataset.audio === '1';
 const v = document.getElementById('v'), c = document.getElementById('c'), a = document.getElementById('a');
 const msg = document.getElementById('msg'), fs = document.getElementById('fs'), bar = document.getElementById('bar');
@@ -70,7 +75,7 @@ async function startRTC() {
   const ctl = pc.createDataChannel('ctl'); // smon's side of the stats
   ctl.onmessage = e => onServerMsg(e.data);
   rtcPC = pc;
-  if (INPUT) {
+  if (INPUT || KEYBOARD) {
     const dc = pc.createDataChannel('input');
     dc.onopen = () => send = m => dc.readyState === 'open' && dc.send(m);
     dc.onclose = () => send = null;
@@ -122,7 +127,7 @@ function startWS() {
   const ws = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws${location.search}`);
   ws.binaryType = 'arraybuffer';
   let dec = null, ts = 0, waitKey = true;
-  ws.onopen = () => { if (INPUT) send = m => ws.readyState === 1 && ws.send(m); };
+  ws.onopen = () => { if (INPUT || KEYBOARD) send = m => ws.readyState === 1 && ws.send(m); };
   // The periodic keyframe is seconds apart: ask for one whenever decoding has to restart.
   const needKey = () => { if (!waitKey && ws.readyState === 1) ws.send('{"t":"key"}'); waitKey = true; };
   ws.onmessage = e => {
@@ -246,10 +251,12 @@ if (AUDIO) {
   for (const t of ['pointerup', 'click', 'keydown']) window.addEventListener(t, unlockSound, true);
 }
 
-// --- touch input ---
+// --- touch and pen input ---
 const down = new Set();
+let penDown = false;
 function onPointer(e) {
   showFs();
+  const pen = e.pointerType === 'pen' && PEN;
   if (!INPUT) return;
   e.preventDefault();
   const w = surface === v ? v.videoWidth : c.width, h = surface === v ? v.videoHeight : c.height;
@@ -257,6 +264,19 @@ function onPointer(e) {
   const r = surface.getBoundingClientRect(), s = Math.min(r.width / w, r.height / h); // object-fit: contain
   const x = (e.clientX - r.left - (r.width - w * s) / 2) / (w * s);
   const y = (e.clientY - r.top - (r.height - h * s) / 2) / (h * s);
+  if (pen) { // a stylus: pressure, tilt, hover, eraser and side buttons
+    let t;
+    if (e.type === 'pointerdown') {
+      if (x < 0 || x > 1 || y < 0 || y > 1) return;
+      surface.setPointerCapture(e.pointerId); penDown = true; t = 'd';
+    } else if (e.type === 'pointermove') t = penDown ? 'm' : 'h';
+    else if (e.type === 'pointerup') { penDown = false; t = 'u'; }
+    else { penDown = false; t = 'l'; } // pointercancel, pointerleave: out of range
+    const b = e.buttons | (e.button === 5 ? 32 : 0); // the eraser end reports button 5
+    send(JSON.stringify({ t, pt: 'pen', x, y, p: e.pressure, tx: e.tiltX || 0, ty: e.tiltY || 0, b }));
+    return;
+  }
+  if (e.type === 'pointerleave') return;
   let t;
   if (e.type === 'pointerdown') {
     if (x < 0 || x > 1 || y < 0 || y > 1) return; // tap on the letterbox
@@ -271,8 +291,55 @@ function onPointer(e) {
   send(JSON.stringify({ t, id: e.pointerId, x, y }));
 }
 for (const el of [v, c]) {
-  for (const t of ['pointerdown', 'pointermove', 'pointerup', 'pointercancel']) el.addEventListener(t, onPointer);
+  for (const t of ['pointerdown', 'pointermove', 'pointerup', 'pointercancel', 'pointerleave']) el.addEventListener(t, onPointer);
   el.addEventListener('contextmenu', e => e.preventDefault()); // long press
+}
+
+// --- keyboard ---
+// A hardware keyboard sends physical keys (KeyboardEvent.code): the desktop's
+// layout decides what they type. An on-screen keyboard only reports text, so
+// it types through a hidden text field and smon maps the text to keys.
+const kb = document.getElementById('kb'), kbin = document.getElementById('kbin');
+if (KEYBOARD) {
+  kb.hidden = false;
+  const key = (e, d) => {
+    if (document.activeElement === kbin) return; // on-screen keyboard: handled below
+    if (e.code === 'Escape' && document.fullscreenElement) return; // the browser leaves fullscreen
+    e.preventDefault();
+    if (d && e.repeat) return; // the desktop repeats held keys itself
+    if (send && e.code) send(JSON.stringify({ t: 'k', c: e.code, d }));
+  };
+  window.addEventListener('keydown', e => key(e, 1));
+  window.addEventListener('keyup', e => key(e, 0));
+  kb.onclick = () => { kbin.value = ''; kbin.focus(); };
+  const tap = c => { if (send) { send(JSON.stringify({ t: 'k', c, d: 1 })); send(JSON.stringify({ t: 'k', c, d: 0 })); } };
+  // Predictive keyboards (Gboard) compose a word and only commit it at the end:
+  // composing can't be cancelled, so let it fill the field and send the word once.
+  kbin.addEventListener('compositionend', e => {
+    if (send && e.data) send(JSON.stringify({ t: 's', s: e.data }));
+    setTimeout(() => { kbin.value = ''; });
+  });
+  kbin.addEventListener('beforeinput', e => {
+    if (e.inputType === 'insertCompositionText' || e.isComposing) return;
+    e.preventDefault();
+    if (!send) return;
+    switch (e.inputType) {
+      case 'insertText': case 'insertReplacementText': case 'insertFromPaste': {
+        const text = e.data ?? e.dataTransfer?.getData('text/plain');
+        if (text) send(JSON.stringify({ t: 's', s: text.slice(0, 1024) }));
+        break;
+      }
+      case 'insertLineBreak': case 'insertParagraph': tap('Enter'); break;
+      case 'deleteContentBackward': tap('Backspace'); break;
+      case 'deleteContentForward': tap('Delete'); break;
+    }
+  });
+  // Keys an on-screen keyboard reports as keys (arrows, Enter on some).
+  kbin.addEventListener('keydown', e => {
+    if (['Enter', 'Tab', 'Escape', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) {
+      e.preventDefault(); tap(e.code || e.key);
+    }
+  });
 }
 
 // --- toolbar: fullscreen, install (double-tap would be a touch on the desktop) ---

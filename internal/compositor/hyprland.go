@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os/exec"
 	"strings"
+
+	"smon/internal/touch"
 )
 
 // hyprland drives Hyprland through hyprctl. Named headless outputs need
@@ -12,9 +14,8 @@ import (
 // when the session runs a Lua config (always from 0.57), and through
 // `hyprctl keyword` with a hyprlang config (up to 0.56).
 type hyprland struct {
-	lua         *bool  // nil until probed
-	globalTouch bool   // fell back to input:touchdevice:output (hyprlang only)
-	prevTouch   string // its value before smon changed it
+	lua    *bool             // nil until probed
+	global map[string]string // global mapping options smon fell back to (hyprlang only) -> value before
 }
 
 // isLua reports whether the session uses the Lua config provider: eval
@@ -38,10 +39,6 @@ func (h *hyprland) setMonitor(name, mode, pos string) error {
 	}
 	return hyprOK("keyword", "monitor", fmt.Sprintf("%s,%s,%s,1", name, mode, pos))
 }
-
-// touchDevice is the uinput name "smon touchscreen" as Hyprland spells
-// device names: lowercase, spaces as dashes.
-const touchDevice = "smon-touchscreen"
 
 // hyprctl runs hyprctl and returns its output.
 func hyprctl(args ...string) (string, error) {
@@ -93,40 +90,56 @@ func (*hyprland) DestroyOutput(name string) { _, _ = hyprctl("output", "remove",
 
 func (*hyprland) WatchLayout(done chan struct{}) {} // no saved layout to defer to
 
-// MapTouch maps only smon's own touchscreen with a per-device rule (stored by
-// name, so it applies when the device appears). If a hyprlang session rejects
-// that, it maps every touchscreen (input:touchdevice:output) and restores the
-// old value on UnmapTouch.
-func (h *hyprland) MapTouch(output string) error {
-	if h.isLua() {
-		return hyprOK("eval", fmt.Sprintf("hl.device({name = %q, output = %q})", touchDevice, output))
+// hyprGlobalOutput is the option that maps every device of dev's kind.
+func hyprGlobalOutput(dev touch.Device) string {
+	if dev.Pen {
+		return "input:tablet:output"
 	}
-	if hyprOK("keyword", "device["+touchDevice+"]:output", output) == nil {
+	return "input:touchdevice:output"
+}
+
+// MapInput maps only smon's own device with a per-device rule (stored by
+// name, so it applies when the device appears). If a hyprlang session rejects
+// that, it maps every device of that kind (input:touchdevice:output or
+// input:tablet:output) and restores the old value on UnmapInput.
+func (h *hyprland) MapInput(dev touch.Device, output string) error {
+	name := dev.Hyprland()
+	if h.isLua() {
+		return hyprOK("eval", fmt.Sprintf("hl.device({name = %q, output = %q})", name, output))
+	}
+	if hyprOK("keyword", "device["+name+"]:output", output) == nil {
 		return nil
 	}
-	out, err := hyprctl("-j", "getoption", "input:touchdevice:output")
+	opt := hyprGlobalOutput(dev)
+	out, err := hyprctl("-j", "getoption", opt)
 	if err != nil {
 		return err
 	}
-	var opt struct{ Str string }
-	_ = json.Unmarshal([]byte(out), &opt) // unreadable: UnmapTouch restores [[Auto]]
-	if err := hyprOK("keyword", "input:touchdevice:output", output); err != nil {
+	var cur struct{ Str string }
+	_ = json.Unmarshal([]byte(out), &cur) // unreadable: UnmapInput restores [[Auto]]
+	if err := hyprOK("keyword", opt, output); err != nil {
 		return err
 	}
-	h.globalTouch, h.prevTouch = true, opt.Str
+	if h.global == nil {
+		h.global = map[string]string{}
+	}
+	if _, ok := h.global[opt]; !ok { // keep the value from before smon
+		h.global[opt] = cur.Str
+	}
 	return nil
 }
 
-func (h *hyprland) UnmapTouch() {
-	if !h.globalTouch {
+func (h *hyprland) UnmapInput(dev touch.Device) {
+	opt := hyprGlobalOutput(dev)
+	prev, ok := h.global[opt]
+	if !ok {
 		return // the per-device rule names a device that is gone
 	}
-	prev := h.prevTouch
 	if prev == "" || prev == "[[EMPTY]]" {
 		prev = "[[Auto]]"
 	}
-	_, _ = hyprctl("keyword", "input:touchdevice:output", prev)
-	h.globalTouch = false
+	_, _ = hyprctl("keyword", opt, prev)
+	delete(h.global, opt)
 }
 
 // hyprMonitor is one entry of `hyprctl -j monitors all`.

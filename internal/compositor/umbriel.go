@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"time"
+
+	"smon/internal/touch"
 )
 
 // umbriel drives the umbriel compositor through its CLI.
@@ -17,9 +19,15 @@ func (umbriel) Name() string { return "umbriel" }
 
 const posKey = "output." + OutputName + ".position"
 
-// touchKey maps touchscreens to one output. umbriel has no per-device mapping,
-// so this also moves any physical touchscreen while smon runs with -input.
-const touchKey = "input.touch.map_to_output"
+// inputKey is the setting that maps dev's kind of device to one output.
+// umbriel has no per-device mapping, so this also moves any physical
+// touchscreen (or pen tablet) while smon runs with -input.
+func inputKey(dev touch.Device) string {
+	if dev.Pen {
+		return "input.tablet.map_to_output"
+	}
+	return "input.touch.map_to_output"
+}
 
 func (u umbriel) CreateOutput(w, h, fps int, pos string) (string, error) {
 	name := OutputName
@@ -39,14 +47,17 @@ func (umbriel) DestroyOutput(name string) {
 	unsetPos() // leave no override behind to fight the saved layout
 }
 
-func (umbriel) MapTouch(output string) error {
-	if out, err := exec.Command("umbriel", "config", "set", touchKey, strconv.Quote(output)).CombinedOutput(); err != nil {
-		return fmt.Errorf("umbriel config set %s: %v: %s", touchKey, err, out)
+func (umbriel) MapInput(dev touch.Device, output string) error {
+	key := inputKey(dev)
+	if out, err := exec.Command("umbriel", "config", "set", key, strconv.Quote(output)).CombinedOutput(); err != nil {
+		return fmt.Errorf("umbriel config set %s: %v: %s", key, err, out)
 	}
 	return nil
 }
 
-func (umbriel) UnmapTouch() { _ = exec.Command("umbriel", "config", "unset", touchKey).Run() }
+func (umbriel) UnmapInput(dev touch.Device) {
+	_ = exec.Command("umbriel", "config", "unset", inputKey(dev)).Run()
+}
 
 // unsetPos drops smon's runtime position override for SMON-1.
 func unsetPos() { _ = exec.Command("umbriel", "config", "unset", posKey).Run() }
