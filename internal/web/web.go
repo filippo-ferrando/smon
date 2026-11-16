@@ -102,6 +102,10 @@ func Serve(d *display.Display, addr string, kbps int, opts Options) error {
 		s.peer.abr = newRateCtl(gst.SetBitrate, kbps)
 		go s.peer.abr.run()
 	}
+	s.peer.stats = &statsSource{
+		encoder: gst.Encoder, codec: "h264", size: fmt.Sprintf("%dx%d", d.W, d.H),
+		fps: d.FPS, kbps: kbps, abr: s.peer.abr,
+	}
 	s.tracks = []webrtc.TrackLocal{video}
 	if opts.Audio != nil {
 		audio, stop, err := startWebAudio(opts.Audio, s.hub)
@@ -259,6 +263,12 @@ func (s *webServer) handleWS(w http.ResponseWriter, r *http.Request) {
 	defer log.Printf("viewer %d disconnected", owner)
 	sub := s.hub.subscribe()
 	defer s.hub.unsubscribe(sub)
+	if st := s.peer.stats; st != nil {
+		st.viewers.Add(1)
+		defer st.viewers.Add(-1)
+	}
+	tick := time.NewTicker(statsEvery)
+	defer tick.Stop()
 
 	done := make(chan struct{})
 	go func() {
@@ -281,14 +291,20 @@ func (s *webServer) handleWS(w http.ResponseWriter, r *http.Request) {
 	}
 	for {
 		var m []byte
+		kind := websocket.BinaryMessage
 		select {
 		case m = <-sub.c:
 		case m = <-sub.a:
+		case <-tick.C: // stats go as text, media as binary
+			if s.peer.stats == nil {
+				continue
+			}
+			m, kind = s.peer.stats.message(), websocket.TextMessage
 		case <-done:
 			return
 		}
 		_ = c.SetWriteDeadline(time.Now().Add(wsWriteTimeout))
-		if c.WriteMessage(websocket.BinaryMessage, m) != nil {
+		if c.WriteMessage(kind, m) != nil {
 			return
 		}
 	}
@@ -394,8 +410,9 @@ func listenTCPAndUDP(addr string) (net.Listener, *net.UDPConn, error) {
 
 // peerHooks tie a viewer's peer connection to the shared encoder.
 type peerHooks struct {
-	keyframe func()   // the viewer needs an IDR; nil: rely on the periodic one
-	abr      *rateCtl // nil: fixed bitrate
+	keyframe func()       // the viewer needs an IDR; nil: rely on the periodic one
+	abr      *rateCtl     // nil: fixed bitrate
+	stats    *statsSource // nil: no stats for the viewer
 }
 
 // answerOffer creates a peer connection for one viewer, sending tracks, and
@@ -418,15 +435,16 @@ func answerOffer(newPC func() (*webrtc.PeerConnection, *bweProbe, error), tracks
 		go readRTCP(sender, keyframe)
 	}
 	owner := int(viewers.Add(1))
-	if tch != nil { // without -input the channel is never read
-		pc.OnDataChannel(func(dc *webrtc.DataChannel) {
-			if dc.Label() != "input" {
-				return
-			}
+	pc.OnDataChannel(func(dc *webrtc.DataChannel) {
+		switch {
+		case dc.Label() == "ctl" && hooks.stats != nil:
+			dc.OnOpen(func() { go sendStats(dc, hooks.stats) })
+		case dc.Label() == "input" && tch != nil: // without -input the channel is never read
 			dc.OnMessage(func(m webrtc.DataChannelMessage) { handleInput(tch, owner, m.Data) })
 			dc.OnClose(func() { tch.Release(owner) })
-		})
-	}
+		}
+	})
+	var counted atomic.Bool // in the viewer count while connected
 	pc.OnConnectionStateChange(func(st webrtc.PeerConnectionState) {
 		log.Printf("viewer %d %s", owner, st)
 		switch st {
@@ -438,12 +456,18 @@ func answerOffer(newPC func() (*webrtc.PeerConnection, *bweProbe, error), tracks
 				hooks.abr.add(bwe)
 				time.AfterFunc(5*time.Second, func() { logABR(owner, bwe) })
 			}
+			if hooks.stats != nil && counted.CompareAndSwap(false, true) {
+				hooks.stats.viewers.Add(1)
+			}
 		case webrtc.PeerConnectionStateFailed, webrtc.PeerConnectionStateClosed, webrtc.PeerConnectionStateDisconnected:
 			if tch != nil {
 				tch.Release(owner)
 			}
 			if hooks.abr != nil && bwe != nil {
 				hooks.abr.remove(bwe)
+			}
+			if hooks.stats != nil && counted.CompareAndSwap(true, false) {
+				hooks.stats.viewers.Add(-1)
 			}
 			_ = pc.Close()
 		}

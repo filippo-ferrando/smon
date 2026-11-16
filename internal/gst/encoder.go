@@ -17,8 +17,10 @@ import (
 // Encoder returns the elements from raw frames (any size, any RGB format) to
 // H.264 at w x h, using the fastest H.264 encoder on this machine. The encoder
 // element is named "enc" (see Pipeline) and sends an IDR every gop frames.
-func Encoder(w, h, fps, kbps, gop int) string {
-	return encoderChain(pickEncoder(w, h, fps, kbps), w, h, fps, kbps, gop, "queue max-size-buffers=2 leaky=downstream")
+// name is the encoder element picked, for the logs and the viewer's stats.
+func Encoder(w, h, fps, kbps, gop int) (chain, name string) {
+	name = pickEncoder(w, h, fps, kbps)
+	return encoderChain(name, w, h, fps, kbps, gop, "queue max-size-buffers=2 leaky=downstream"), name
 }
 
 // cpbSize is the VA-API rate-control buffer for kbps, in kbit: ~200 ms.

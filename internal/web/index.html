@@ -20,6 +20,8 @@
   #bar.show { opacity: 1; pointer-events: auto; }
   #bar button { width: 44px; height: 44px; padding: 10px; border: 0; border-radius: 8px; background: rgba(40,40,40,.7); color: #eee; }
   #bar button[hidden] { display: none; }
+  #stats { position: fixed; top: 60px; right: 8px; padding: 8px 10px; border-radius: 8px; background: rgba(0,0,0,.75);
+    color: #d8f0d8; font: 12px/1.45 ui-monospace, monospace; white-space: pre; pointer-events: none; display: none; }
   #trust { position: fixed; bottom: 8px; right: 8px; max-width: 22em; padding: 8px 10px; border-radius: 8px;
     background: rgba(40,40,40,.85); color: #ddd; font: 13px system-ui, sans-serif; display: none; }
   #trust a { color: #8cc4ff; }
@@ -33,8 +35,10 @@
 <div id="snd">tap for sound</div>
 <div id="trust">To install this viewer as an app, trust smon's certificate once:
   <a href="ca.crt">download it</a>, then install it in the device settings (see smon's docs). <a href="#" id="trustx">Dismiss</a></div>
+<div id="stats"></div>
 <div id="bar">
   <button id="inst" hidden aria-label="Install as an app"><svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></svg></button>
+  <button id="info" aria-label="Show stream stats"><svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7.5v.5"/></svg></button>
   <button id="fs" aria-label="Toggle fullscreen"><svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></button>
 </div>
 <script>
@@ -63,6 +67,9 @@ async function startRTC() {
   const pc = new RTCPeerConnection();
   pc.addTransceiver('video', { direction: 'recvonly' });
   if (AUDIO) pc.addTransceiver('audio', { direction: 'recvonly' });
+  const ctl = pc.createDataChannel('ctl'); // smon's side of the stats
+  ctl.onmessage = e => onServerMsg(e.data);
+  rtcPC = pc;
   if (INPUT) {
     const dc = pc.createDataChannel('input');
     dc.onopen = () => send = m => dc.readyState === 'open' && dc.send(m);
@@ -119,6 +126,8 @@ function startWS() {
   // The periodic keyframe is seconds apart: ask for one whenever decoding has to restart.
   const needKey = () => { if (!waitKey && ws.readyState === 1) ws.send('{"t":"key"}'); waitKey = true; };
   ws.onmessage = e => {
+    if (typeof e.data === 'string') { onServerMsg(e.data); return; } // stats
+    wsBytes += e.data.byteLength;
     const b = new Uint8Array(e.data), key = (b[0] & 1) === 1, au = b.subarray(1);
     if (b[0] & 2) { playOpus(au); return; } // audio frame
     if (!dec || dec.state === 'closed') {
@@ -126,7 +135,7 @@ function startWS() {
       dec = new VideoDecoder({
         output: f => {
           if (c.width !== f.displayWidth || c.height !== f.displayHeight) { c.width = f.displayWidth; c.height = f.displayHeight; }
-          ctx.drawImage(f, 0, 0); f.close(); if (msg.textContent) connected();
+          ctx.drawImage(f, 0, 0); f.close(); wsFrames++; if (msg.textContent) connected();
         },
         error: err => { msg.textContent = 'decoder: ' + err.message; needKey(); },
       });
@@ -143,6 +152,64 @@ function startWS() {
     retry(async () => startWS());
   };
 }
+
+// --- stats overlay ---
+const statsEl = document.getElementById('stats'), info = document.getElementById('info');
+let rtcPC = null, server = null, wsFrames = 0, wsBytes = 0, prev = null, statsOn = false;
+try { statsOn = localStorage.getItem('smon-stats') === '1'; } catch {}
+function onServerMsg(text) {
+  try { const m = JSON.parse(text); if (m.t === 'stats') server = m; } catch {}
+}
+info.onclick = () => {
+  statsOn = !statsOn; statsEl.style.display = statsOn ? 'block' : 'none';
+  try { localStorage.setItem('smon-stats', statsOn ? '1' : '0'); } catch {}
+};
+statsEl.style.display = statsOn ? 'block' : 'none';
+// One line per measure; the browser's own numbers where it has them.
+async function measure() {
+  const now = performance.now(), out = {};
+  if (surface === v && rtcPC) {
+    const r = await rtcPC.getStats();
+    r.forEach(s => {
+      if (s.type === 'inbound-rtp' && s.kind === 'video') {
+        out.bytes = s.bytesReceived; out.fps = s.framesPerSecond; out.lost = s.packetsLost; out.dropped = s.framesDropped;
+        out.decoder = s.decoderImplementation; out.w = s.frameWidth; out.h = s.frameHeight;
+        if (s.framesDecoded) out.decodeMs = 1000 * s.totalDecodeTime / s.framesDecoded;
+        if (s.jitterBufferEmittedCount) out.bufferMs = 1000 * s.jitterBufferDelay / s.jitterBufferEmittedCount;
+      }
+      if (s.type === 'candidate-pair' && s.nominated && s.state === 'succeeded' && s.currentRoundTripTime !== undefined)
+        out.rtt = 1000 * s.currentRoundTripTime;
+    });
+  } else {
+    out.bytes = wsBytes; out.frames = wsFrames; out.w = c.width; out.h = c.height; out.decoder = 'WebCodecs';
+  }
+  if (prev) {
+    const dt = (now - prev.now) / 1000;
+    out.kbps = 8 * (out.bytes - prev.bytes) / 1000 / dt;
+    if (out.frames !== undefined) out.fps = (out.frames - prev.frames) / dt;
+  }
+  prev = { now, bytes: out.bytes, frames: out.frames };
+  return out;
+}
+const f0 = n => n === undefined || isNaN(n) ? '–' : Math.round(n);
+setInterval(async () => {
+  if (!statsOn) { prev = null; return; }
+  let m = {};
+  try { m = await measure(); } catch {}
+  const lines = [];
+  if (server) {
+    lines.push(`encoder  ${server.enc || '?'} (${server.codec})`);
+    lines.push(`stream   ${server.size} @ ${server.fps} fps`);
+    lines.push(`bitrate  ${server.kbps} / ${server.max} kbps`);
+    lines.push(`viewers  ${server.viewers}`);
+  }
+  lines.push(`received ${f0(m.kbps)} kbps, ${f0(m.fps)} fps`);
+  if (m.w) lines.push(`decoded  ${m.w}x${m.h} by ${m.decoder || '?'}${m.decodeMs !== undefined ? `, ${m.decodeMs.toFixed(1)} ms/frame` : ''}`);
+  if (m.rtt !== undefined) lines.push(`network  ${f0(m.rtt)} ms round trip`);
+  if (m.bufferMs !== undefined) lines.push(`buffer   ${f0(m.bufferMs)} ms`);
+  if (m.lost !== undefined) lines.push(`lost     ${m.lost} packets, ${m.dropped ?? 0} frames dropped`);
+  statsEl.textContent = lines.join('\n');
+}, 1000);
 
 // --- sound ---
 // Browsers start media silent until a user gesture: the first tap/click/key unlocks it.

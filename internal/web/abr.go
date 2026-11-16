@@ -90,6 +90,13 @@ func newRateCtl(set func(kbps int), maxKbps int) *rateCtl {
 	return &rateCtl{set: set, max: maxKbps, min: min(max(maxKbps/10, 300), maxKbps), cur: maxKbps, viewers: map[*bweProbe]struct{}{}}
 }
 
+// current returns the encoder bitrate now, and the most it may climb to.
+func (r *rateCtl) current() (cur, maxKbps int) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.cur, r.max
+}
+
 func (r *rateCtl) add(p *bweProbe) {
 	r.mu.Lock()
 	defer r.mu.Unlock()

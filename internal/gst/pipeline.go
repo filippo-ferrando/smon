@@ -93,6 +93,8 @@ var gstInit sync.Once
 // gst-launch child it can be steered while it plays: forced keyframes when a
 // viewer needs one, and live bitrate changes. The encoder must be named "enc".
 type Pipeline struct {
+	Encoder string // the encoder element, when the caller set it; for display only
+
 	mu   sync.Mutex
 	p    *C.GstElement // nil once the pipeline has ended
 	done chan struct{}

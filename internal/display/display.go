@@ -256,16 +256,18 @@ func (d *Display) Pipeline(kbps, w, h, fps, gop int, tail string) (*gst.Pipeline
 	if err != nil {
 		return nil, err
 	}
+	enc, encName := gst.Encoder(w, h, fps, kbps, gop)
 	p := fmt.Sprintf("pipewiresrc fd=%d path=%d keepalive-time=%d always-copy=true do-timestamp=true ! "+
 		"%s ! video/x-h264,profile=constrained-baseline ! "+
 		"h264parse config-interval=-1 ! %s",
-		fd, d.node, 1000/d.FPS, gst.Encoder(w, h, fps, kbps, gop), tail)
+		fd, d.node, 1000/d.FPS, enc, tail)
 	g, err := gst.Start(p)
 	if err != nil {
 		gst.ForgetEncoder(w, h) // maybe a saved encoder that no longer works
 		unix.Close(fd)
 		return nil, err
 	}
+	g.Encoder = encName
 	started := time.Now()
 	go func() {
 		if err := g.Wait(); err != nil && time.Since(started) < encoderTrial {
