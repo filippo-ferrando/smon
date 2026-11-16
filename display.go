@@ -201,6 +201,16 @@ func (d *Display) screencast(mode string) error {
 // screen that was picked.
 func (d *Display) checkSource(mode string, props map[string]dbus.Variant) error {
 	name, _ := props["mapping_id"].Value().(string) // the output name (umbriel and xdg-desktop-portal-hyprland)
+	// xdg-desktop-portal-hyprland ignores the requested source types: its
+	// picker also offers windows, regions and workspaces, which come back
+	// without mapping_id and would pass for SMON-1 below.
+	if st, ok := props["source_type"].Value().(uint32); ok && st != 1 { // 1: monitor
+		want := outputName
+		if mode == "mirror" {
+			want = "a screen"
+		}
+		return fmt.Errorf("the share picker returned a window, region or workspace, not a whole screen: run again and choose %s", want)
+	}
 	if mode == "mirror" {
 		var size struct{ W, H int32 } // D-Bus (ii)
 		if props["size"].Store(&size) == nil && size.W > 0 && size.H > 0 {
