@@ -15,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -249,7 +250,8 @@ func printURLs(scheme string, ips []string, port int, token string, opts Options
 	}
 }
 
-func (s *webServer) handleIndex(w http.ResponseWriter, _ *http.Request) {
+func (s *webServer) handleIndex(w http.ResponseWriter, r *http.Request) {
+	log.Printf("viewer page opened from %s (%s)", clientIP(r), r.UserAgent())
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_, _ = w.Write(s.page)
 }
@@ -262,6 +264,7 @@ func (s *webServer) handleOffer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !s.codec.offeredIn(offer.SDP) {
+		log.Printf("viewer at %s can't receive %s (its browser offers %s): restart smon with -codec h264", clientIP(r), s.codec.label, strings.Join(offeredCodecs(offer.SDP), ", "))
 		http.Error(w, s.codec.unsupported(), http.StatusUnsupportedMediaType)
 		return
 	}
@@ -595,4 +598,12 @@ func lanIPs() []string {
 		}
 	}
 	return ips
+}
+
+// clientIP is the address a request came from, for the log.
+func clientIP(r *http.Request) string {
+	if h, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
+		return h
+	}
+	return r.RemoteAddr
 }

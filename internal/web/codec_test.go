@@ -1,6 +1,7 @@
 package web
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/pion/webrtc/v4"
@@ -71,5 +72,12 @@ func TestAnswerOfferH265(t *testing.T) {
 	}
 	if !videoCodecs["h265"].offeredIn(answer.SDP) {
 		t.Fatalf("answer lacks H.265:\n%s", answer.SDP)
+	}
+}
+
+func TestOfferedCodecs(t *testing.T) {
+	got := offeredCodecs(clientOffer(t, webrtc.MimeTypeH264, webrtc.MimeTypeVP8).SDP)
+	if strings.Join(got, ",") != "H264,VP8" {
+		t.Fatalf("offered %v", got)
 	}
 }

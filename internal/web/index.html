@@ -15,7 +15,9 @@
   video, canvas { width: 100vw; height: 100vh; object-fit: contain; display: block;
     touch-action: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
   canvas { display: none; }
-  #msg { position: fixed; top: 8px; left: 8px; color: #ccc; font: 14px system-ui, sans-serif; pointer-events: none; }
+  #msg { position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%); max-width: min(32em, 90vw); padding: 14px 18px;
+    border-radius: 10px; background: rgba(40,40,40,.85); color: #eee; font: 16px/1.4 system-ui, sans-serif; text-align: center; pointer-events: none; }
+  #msg:empty { display: none; }
   #bar { position: fixed; top: 8px; right: 8px; display: flex; gap: 8px; opacity: 0; pointer-events: none; transition: opacity .3s; }
   #bar.show { opacity: 1; pointer-events: auto; }
   #bar button { width: 44px; height: 44px; padding: 10px; border: 0; border-radius: 8px; background: rgba(40,40,40,.7); color: #eee; }
@@ -34,8 +36,8 @@
 <canvas id="c"></canvas>
 <div id="msg">connecting…</div>
 <div id="snd">tap for sound</div>
-<div id="trust">To install this viewer as an app, trust smon's certificate once:
-  <a href="ca.crt">download it</a>, then install it in the device settings (see smon's docs). <a href="#" id="trustx">Dismiss</a></div>
+<div id="trust">This device doesn't trust smon's certificate yet. Trust it once:
+  <a href="ca.crt">download it</a>, then install it in the device settings (see smon's docs, Receivers → HTTPS). That also lets you install this viewer as an app. <a href="#" id="trustx">Dismiss</a></div>
 <div id="stats"></div>
 <textarea id="kbin" autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false" aria-hidden="true"></textarea>
 <div id="bar">
@@ -81,13 +83,23 @@ const CID = (() => {
   }
   return id;
 })();
+// A request that fails outright while this page itself loaded over HTTPS is
+// most likely the certificate: some browsers let you past the warning for
+// the page but not for its requests. Say so, with the way out.
+function unreachable() {
+  if (location.protocol === 'https:') {
+    trust.style.display = 'block';
+    return new Error("can't reach smon. If this browser didn't fully accept smon's certificate, install it (below), or run smon with -tls=false");
+  }
+  return new Error('smon is not reachable');
+}
 const WANT = +new URLSearchParams(location.search).get('m') || 0;
 async function claim() {
   const slow = setTimeout(() => { msg.textContent = 'setting up your monitor… (if a share dialog shows on the computer, allow it)'; }, 1500);
   let res;
   try {
     res = await fetch('/claim' + location.search, { method: 'POST', body: JSON.stringify({ cid: CID, m: WANT, portrait: innerHeight > innerWidth }) });
-  } catch (e) { throw new Error('smon is not reachable'); }
+  } catch (e) { throw unreachable(); }
   finally { clearTimeout(slow); }
   const text = await res.text();
   if (res.status === 403) throw new Fatal('this link is no longer valid (smon -new-token?): open the new URL smon prints');
@@ -136,7 +148,7 @@ async function startRTC() {
   try {
     const q = new URLSearchParams(location.search); q.set('m', mon); q.set('c', CID);
     res = await fetch('/offer?' + q, { method: 'POST', body: JSON.stringify(pc.localDescription) });
-  } catch (e) { pc.close(); throw new Error('smon is not reachable'); }
+  } catch (e) { pc.close(); throw unreachable(); }
   if (!res.ok) {
     const text = (await res.text()).trim();
     pc.close();

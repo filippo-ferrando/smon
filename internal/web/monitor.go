@@ -158,6 +158,9 @@ func (s *webServer) handleClaim(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	n, err := s.alloc.claim(req.CID, req.M, req.Portrait)
+	if err != nil {
+		log.Printf("viewer at %s: no monitor: %v", clientIP(r), err)
+	}
 	switch {
 	case errors.Is(err, errNoMonitor):
 		http.Error(w, fmt.Sprintf("monitor %d does not exist (any more): open the page without &m=", req.M), http.StatusNotFound)

@@ -2,6 +2,7 @@ package web
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/pion/webrtc/v4"
@@ -47,6 +48,24 @@ func (v videoCodec) offeredIn(sdp string) bool {
 		}
 	}
 	return false
+}
+
+// offeredCodecs lists the video encoding names in an SDP offer, for the log.
+func offeredCodecs(sdp string) []string {
+	var names []string
+	for l := range strings.SplitSeq(sdp, "\n") {
+		l = strings.TrimSpace(l)
+		if !strings.HasPrefix(l, "a=rtpmap:") {
+			continue
+		}
+		if _, enc, ok := strings.Cut(l, " "); ok {
+			name, _, _ := strings.Cut(enc, "/")
+			if !slices.Contains(names, name) && !slices.Contains([]string{"rtx", "red", "ulpfec", "flexfec-03", "opus", "G722", "PCMU", "PCMA", "CN", "telephone-event"}, name) {
+				names = append(names, name)
+			}
+		}
+	}
+	return names
 }
 
 // unsupported is the message a viewer gets when its browser cannot decode
