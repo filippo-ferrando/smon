@@ -74,6 +74,13 @@ type PortalOutput interface {
 	PlaceOutput(name string, spec OutputSpec) error
 }
 
+// CapsSizedOutput is implemented by portal-made outputs that take their size
+// from the video format the consumer negotiates (Mutter's virtual monitors):
+// smon then asks for -w x -h in the capture caps.
+type CapsSizedOutput interface {
+	CapsSized() bool
+}
+
 // Output is one monitor and where it sits in the layout, in logical pixels.
 type Output struct {
 	Name     string
@@ -94,9 +101,11 @@ func Detect(flag string) (Compositor, error) {
 		return &sway{}, nil
 	case "kde":
 		return &kde{}, nil
+	case "gnome":
+		return &gnome{}, nil
 	case "":
 	default:
-		return nil, fmt.Errorf("bad -compositor %q (umbriel|hyprland|sway|kde)", flag)
+		return nil, fmt.Errorf("bad -compositor %q (umbriel|hyprland|sway|kde|gnome)", flag)
 	}
 	switch {
 	case os.Getenv("HYPRLAND_INSTANCE_SIGNATURE") != "":
@@ -105,11 +114,13 @@ func Detect(flag string) (Compositor, error) {
 		return &sway{}, nil
 	case os.Getenv("KDE_FULL_SESSION") == "true", strings.Contains(os.Getenv("XDG_CURRENT_DESKTOP"), "KDE"):
 		return &kde{}, nil
+	case strings.Contains(os.Getenv("XDG_CURRENT_DESKTOP"), "GNOME"):
+		return &gnome{}, nil
 	}
 	if _, err := exec.LookPath("umbriel"); err == nil {
 		return umbriel{}, nil
 	}
-	return nil, fmt.Errorf("no supported compositor found (umbriel, Hyprland, Sway or KDE Plasma); use -compositor to force one")
+	return nil, fmt.Errorf("no supported compositor found (umbriel, Hyprland, Sway, KDE Plasma or GNOME); use -compositor to force one")
 }
 
 // placeXY returns where a w x h output goes when placed pos (right|left|above|below)

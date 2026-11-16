@@ -109,3 +109,25 @@ func TestNameByPosition(t *testing.T) {
 		t.Error("extend accepted eDP-1 found by position")
 	}
 }
+
+// GNOME: the virtual monitor takes the size smon asks for in the caps, so
+// a size property from the portal does not override -w/-h.
+type fakeCapsComp struct{ fakePortalComp }
+
+func (*fakeCapsComp) CapsSized() bool { return true }
+
+func TestCapsSizedKeepsRequestedSize(t *testing.T) {
+	c := &fakeCapsComp{}
+	d := &Display{W: 1600, H: 2560, comp: c, portalOut: true}
+	props := map[string]dbus.Variant{
+		"source_type": dbus.MakeVariant(uint32(4)),
+		"mapping_id":  dbus.MakeVariant("Meta-0"),
+		"size":        dbus.MakeVariant([]any{int32(1920), int32(1080)}),
+	}
+	if err := d.checkSource("extend", props); err != nil {
+		t.Fatal(err)
+	}
+	if d.W != 1600 || d.H != 2560 || !d.capsSized() {
+		t.Fatalf("size %dx%d, capsSized %v", d.W, d.H, d.capsSized())
+	}
+}

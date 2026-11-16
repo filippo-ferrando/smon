@@ -54,6 +54,9 @@ func New(comp compositor.Compositor, spec compositor.OutputSpec, mode string) (*
 			d.portalOut = true
 			d.before, _ = comp.Outputs() // best effort: names the output when the portal does not
 			hint = "smon: in the share dialog allow the new virtual display (on Plasma 6.8+ choose its resolution there)"
+			if comp.Name() == "gnome" {
+				hint = "smon: in the share dialog choose the virtual monitor"
+			}
 			break
 		}
 		name, err := comp.CreateOutput(spec)
@@ -183,7 +186,7 @@ func (d *Display) checkSource(mode string, props map[string]dbus.Variant) error 
 		name = d.findOutput(props)
 	}
 	if mode == "mirror" || d.portalOut {
-		if size, ok := propPair(props, "size"); ok && size[0] > 0 && size[1] > 0 {
+		if size, ok := propPair(props, "size"); ok && size[0] > 0 && size[1] > 0 && !d.capsSized() {
 			if d.portalOut && (size[0] != d.W || size[1] != d.H) {
 				fmt.Fprintf(os.Stderr, "smon: the virtual display is %dx%d, not the -w/-h %dx%d\n", size[0], size[1], d.W, d.H)
 			}
@@ -216,6 +219,13 @@ func (d *Display) checkSource(mode string, props map[string]dbus.Variant) error 
 	}
 	d.output = d.want
 	return nil
+}
+
+// capsSized reports whether the portal-made output takes the size smon asks
+// for in the capture caps, rather than one picked in the share dialog.
+func (d *Display) capsSized() bool {
+	c, ok := d.comp.(compositor.CapsSizedOutput)
+	return ok && d.portalOut && c.CapsSized()
 }
 
 // propPair reads a D-Bus (ii) stream property such as size or position.
@@ -281,10 +291,13 @@ func (d *Display) Pipeline(kbps, w, h, fps, gop int, tail string) (*gst.Pipeline
 		return nil, err
 	}
 	enc, encName := gst.Encoder(w, h, fps, kbps, gop)
-	p := fmt.Sprintf("pipewiresrc fd=%d path=%d keepalive-time=%d always-copy=true do-timestamp=true ! "+
-		"%s ! video/x-h264,profile=constrained-baseline ! "+
+	src := fmt.Sprintf("pipewiresrc fd=%d path=%d keepalive-time=%d always-copy=true do-timestamp=true", fd, d.node, 1000/d.FPS)
+	if d.capsSized() { // the virtual monitor becomes whatever size we ask for
+		src += fmt.Sprintf(" ! video/x-raw,width=%d,height=%d", d.W, d.H)
+	}
+	p := fmt.Sprintf("%s ! %s ! video/x-h264,profile=constrained-baseline ! "+
 		"h264parse config-interval=-1 ! %s",
-		fd, d.node, 1000/d.FPS, enc, tail)
+		src, enc, tail)
 	g, err := gst.Start(p)
 	if err != nil {
 		gst.ForgetEncoder(w, h) // maybe a saved encoder that no longer works
