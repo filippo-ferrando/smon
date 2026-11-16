@@ -1,26 +1,24 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strconv"
 	"strings"
-	"time"
 
 	"github.com/godbus/dbus/v5"
 )
 
 const outputName = "SMON-1"
 
-// Display is a portal screencast of either a new virtual umbriel output
-// (extend) or an existing one (mirror).
+// Display is a portal screencast of either a new virtual output (extend) or
+// an existing one (mirror).
 type Display struct {
 	W, H, FPS int
 	virtual   bool
+	comp      compositor
 	output    string        // captured output name (SMON-1, or the mirrored screen)
 	touch     *Touch        // virtual touchscreen, if input is enabled
 	cleanup   []func()      // extra teardown, run by Close
@@ -32,31 +30,29 @@ type Display struct {
 
 // NewDisplay starts a screencast. mode "extend" creates SMON-1 next to the
 // existing outputs; "mirror" duplicates an existing screen. The first run of
-// each mode shows the umbriel share picker; its restore token (one per mode)
-// makes later runs silent.
-func NewDisplay(w, h, fps int, pos, mode string) (*Display, error) {
-	d := &Display{W: w, H: h, FPS: fps, virtual: mode == "extend"}
+// each mode shows the share picker; its restore token (one per mode) makes
+// later runs silent.
+func NewDisplay(comp compositor, w, h, fps int, pos, mode string) (*Display, error) {
+	d := &Display{W: w, H: h, FPS: fps, comp: comp, virtual: mode == "extend"}
+	pick := "the screen to duplicate"
 	switch mode {
 	case "extend":
-		exec.Command("umbriel", "output-destroy", outputName).Run() // stale output from a crash
-		if out, err := exec.Command("umbriel", "output-create", outputName, fmt.Sprintf("%dx%d@%d", w, h, fps)).CombinedOutput(); err != nil {
-			return nil, fmt.Errorf("umbriel output-create: %v: %s", err, out)
-		}
-		if err := layout(pos, w, h); err != nil {
-			d.Close()
+		if err := comp.createOutput(outputName, w, h, fps, pos); err != nil {
 			return nil, err
 		}
 		d.done = make(chan struct{})
-		go watchLayout(d.done)
-		if _, err := os.Stat(tokenPath(mode)); err != nil {
-			fmt.Fprintln(os.Stderr, "smon: in the share picker choose "+outputName)
-		}
+		go comp.watchLayout(d.done)
+		pick = outputName
 	case "mirror":
-		if _, err := os.Stat(tokenPath(mode)); err != nil {
-			fmt.Fprintln(os.Stderr, "smon: in the share picker choose the screen to duplicate")
-		}
 	default:
 		return nil, fmt.Errorf("bad -mode %q (extend|mirror)", mode)
+	}
+	if _, err := os.Stat(tokenPath(mode)); err != nil {
+		hint := "smon: in the share picker choose " + pick
+		if comp.name() == "hyprland" {
+			hint += " and tick \"Allow a restore token\" so later runs skip the picker"
+		}
+		fmt.Fprintln(os.Stderr, hint)
 	}
 	if err := d.screencast(mode); err != nil {
 		d.Close()
@@ -73,7 +69,7 @@ func (d *Display) Close() {
 	if d.touch != nil {
 		d.touch.Close()
 		d.touch = nil
-		exec.Command("umbriel", "config", "unset", touchKey).Run()
+		d.comp.unmapTouch()
 	}
 	if d.fd != nil {
 		d.fd.Close()
@@ -86,16 +82,9 @@ func (d *Display) Close() {
 			close(d.done)
 			d.done = nil
 		}
-		exec.Command("umbriel", "output-destroy", outputName).Run()
-		unsetPos() // leave no override behind to fight the saved layout
+		d.comp.destroyOutput(outputName)
 	}
 }
-
-const posKey = "output." + outputName + ".position"
-
-// touchKey maps touchscreens to one output. umbriel has no per-device mapping,
-// so this also moves any physical touchscreen while smon runs with -input.
-const touchKey = "input.touch.map_to_output"
 
 // AtClose registers f to run when the display closes (also on Ctrl-C), in
 // reverse order of registration.
@@ -108,109 +97,17 @@ func (d *Display) EnableTouch() (*Touch, error) {
 		return nil, fmt.Errorf("touch input: the portal did not say which output is shared")
 	}
 	// Map first, so the device never lands on the wrong output.
-	if out, err := exec.Command("umbriel", "config", "set", touchKey, strconv.Quote(d.output)).CombinedOutput(); err != nil {
-		return nil, fmt.Errorf("umbriel config set %s: %v: %s", touchKey, err, out)
+	if err := d.comp.mapTouch(d.output); err != nil {
+		return nil, err
 	}
 	t, err := newTouch(d.W, d.H)
 	if err != nil {
-		exec.Command("umbriel", "config", "unset", touchKey).Run()
+		d.comp.unmapTouch()
 		return nil, err
 	}
 	d.touch = t
 	fmt.Fprintf(os.Stderr, "smon: touch input enabled on %s\n", d.output)
 	return t, nil
-}
-
-func unsetPos() { exec.Command("umbriel", "config", "unset", posKey).Run() }
-
-// layout leaves SMON-1 to the saved display layout (outputs.toml, owned by
-// the displays plugin; umbriel itself keeps outputs from overlapping), unless
-// pos asks smon to place it with a runtime override.
-func layout(pos string, w, h int) error {
-	if pos == "" {
-		unsetPos()
-		return nil
-	}
-	return place(pos, w, h)
-}
-
-// watchLayout hands placement back to the saved layout whenever the user
-// rearranges displays (the displays plugin rewrites outputs.toml): a runtime
-// override would otherwise pin SMON-1 away from where the plugin shows it.
-// ponytail: 1s mtime poll instead of inotify; fine for a human dragging monitors.
-func watchLayout(done chan struct{}) {
-	dir, _ := os.UserConfigDir()
-	file := filepath.Join(dir, "umbriel", "outputs.toml")
-	mtime := func() time.Time {
-		st, err := os.Stat(file)
-		if err != nil {
-			return time.Time{}
-		}
-		return st.ModTime()
-	}
-	last := mtime()
-	t := time.NewTicker(time.Second)
-	defer t.Stop()
-	for {
-		select {
-		case <-done:
-			return
-		case <-t.C:
-			if m := mtime(); !m.Equal(last) {
-				last = m
-				unsetPos()
-			}
-		}
-	}
-}
-
-type outputInfo struct {
-	Name     string
-	Enabled  bool
-	Position struct{ X, Y int }
-	Logical  struct{ Width, Height int } `json:"logical_size"`
-}
-
-func outputs() ([]outputInfo, error) {
-	out, err := exec.Command("umbriel", "outputs", "--json").Output()
-	if err != nil {
-		return nil, fmt.Errorf("umbriel outputs: %w", err)
-	}
-	var outs []outputInfo
-	return outs, json.Unmarshal(out, &outs)
-}
-
-// place positions SMON-1 relative to the bounding box of the other outputs.
-func place(pos string, w, h int) error {
-	outs, err := outputs()
-	if err != nil {
-		return err
-	}
-	minX, minY, maxX, maxY := 1<<30, 1<<30, -1<<30, -1<<30
-	for _, o := range outs {
-		if o.Name == outputName || !o.Enabled {
-			continue
-		}
-		minX, minY = min(minX, o.Position.X), min(minY, o.Position.Y)
-		maxX, maxY = max(maxX, o.Position.X+o.Logical.Width), max(maxY, o.Position.Y+o.Logical.Height)
-	}
-	if maxX < minX {
-		return nil // no other outputs, leave it where umbriel put it
-	}
-	var x, y int
-	switch pos {
-	case "right":
-		x, y = maxX, minY
-	case "left":
-		x, y = minX-w, minY
-	case "above":
-		x, y = minX, minY-h
-	case "below":
-		x, y = minX, maxY
-	default:
-		return fmt.Errorf("bad --pos %q (right|left|above|below)", pos)
-	}
-	return exec.Command("umbriel", "config", "set", posKey, fmt.Sprintf("[%d,%d]", x, y)).Run()
 }
 
 func configDir() string {
@@ -303,7 +200,17 @@ func (d *Display) screencast(mode string) error {
 // laptop panel, which would just duplicate it), and sizes mirror mode to the
 // screen that was picked.
 func (d *Display) checkSource(mode string, props map[string]dbus.Variant) error {
-	name, _ := props["mapping_id"].Value().(string) // umbriel: the output name
+	name, _ := props["mapping_id"].Value().(string) // the output name (umbriel and xdg-desktop-portal-hyprland)
+	// xdg-desktop-portal-hyprland ignores the requested source types: its
+	// picker also offers windows, regions and workspaces, which come back
+	// without mapping_id and would pass for SMON-1 below.
+	if st, ok := props["source_type"].Value().(uint32); ok && st != 1 { // 1: monitor
+		want := outputName
+		if mode == "mirror" {
+			want = "a screen"
+		}
+		return fmt.Errorf("the share picker returned a window, region or workspace, not a whole screen: run again and choose %s", want)
+	}
 	if mode == "mirror" {
 		var size struct{ W, H int32 } // D-Bus (ii)
 		if props["size"].Store(&size) == nil && size.W > 0 && size.H > 0 {

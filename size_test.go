@@ -17,3 +17,19 @@ func TestMirrorSize(t *testing.T) {
 		t.Fatal("extend accepted eDP-1")
 	}
 }
+
+// xdg-desktop-portal-hyprland lets the user pick a window or region even
+// though smon asks for monitors; those streams carry no mapping_id.
+func TestRejectNonMonitorSource(t *testing.T) {
+	window := map[string]dbus.Variant{"source_type": dbus.MakeVariant(uint32(2))}
+	for _, mode := range []string{"extend", "mirror"} {
+		if err := (&Display{}).checkSource(mode, window); err == nil {
+			t.Errorf("%s accepted a window", mode)
+		}
+	}
+	monitor := map[string]dbus.Variant{"source_type": dbus.MakeVariant(uint32(1)), "mapping_id": dbus.MakeVariant(outputName)}
+	d := &Display{}
+	if err := d.checkSource("extend", monitor); err != nil || d.output != outputName {
+		t.Errorf("extend rejected SMON-1: %v", err)
+	}
+}
