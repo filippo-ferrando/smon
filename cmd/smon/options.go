@@ -43,11 +43,11 @@ func parseArgs(args []string) options {
 	fs.IntVar(&o.height, "h", 1080, "height")
 	fs.IntVar(&o.fps, "fps", 30, "frame rate")
 	fs.IntVar(&o.kbps, "kbps", 8000, "video bitrate")
-	fs.StringVar(&o.pos, "pos", "", "extend: initial placement right|left|above|below (default: umbriel's saved display layout, Hyprland auto-right; on umbriel rearranging in the displays plugin always wins)")
+	fs.StringVar(&o.pos, "pos", "", "extend: initial placement right|left|above|below (default: umbriel's saved display layout, the compositor's own placement elsewhere; on umbriel rearranging in the displays plugin always wins)")
 	fs.StringVar(&o.mode, "mode", "extend", "extend: new virtual monitor; mirror: duplicate an existing screen")
 	fs.StringVar(&o.addr, "addr", ":8080", "web/webos: listen address (TCP and UDP); usb: only the port is used")
 	fs.BoolVar(&o.input, "input", false, "web/usb: viewer touches control the shared screen (anyone with the URL can)")
-	fs.StringVar(&o.compositor, "compositor", "", "umbriel|hyprland (default: detected from the session)")
+	fs.StringVar(&o.compositor, "compositor", "", "umbriel|hyprland|sway|kde (default: detected from the session)")
 	fs.BoolVar(&o.audio, "audio", true, "add a \"Second Monitor (smon)\" sound output while streaming; what you play there reaches the receiver (not airplay)")
 	_ = fs.Parse(args[1:]) // ExitOnError: never returns an error
 

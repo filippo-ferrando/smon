@@ -26,38 +26,52 @@ type Display struct {
 	W, H, FPS int
 	virtual   bool
 	comp      compositor.Compositor
-	output    string        // captured output name (SMON-1, or the mirrored screen)
-	touch     *touch.Touch  // virtual touchscreen, if input is enabled
-	cleanup   []func()      // extra teardown, run by Close
-	done      chan struct{} // stops the layout watcher
+	want      string              // extend: the virtual output's name ("" until the portal names it)
+	portalOut bool                // extend: the portal creates the output (compositor.PortalOutput)
+	pos       string              // extend: -pos, for a portal-made output
+	before    []compositor.Output // extend, portal-made: the outputs before it existed
+	output    string              // captured output name (the virtual one, or the mirrored screen)
+	touch     *touch.Touch        // virtual touchscreen, if input is enabled
+	cleanup   []func()            // extra teardown, run by Close
+	done      chan struct{}       // stops the layout watcher
 	node      uint32
 	fd        *os.File
 	conn      *dbus.Conn
 }
 
-// New starts a screencast. mode "extend" creates SMON-1 next to the
-// existing outputs; "mirror" duplicates an existing screen. The first run of
+// New starts a screencast. mode "extend" creates a virtual output next to the
+// existing ones (SMON-1 where smon names it); "mirror" duplicates an existing screen. The first run of
 // each mode shows the share picker; its restore token (one per mode) makes
 // later runs silent.
 func New(comp compositor.Compositor, w, h, fps int, pos, mode string) (*Display, error) {
-	d := &Display{W: w, H: h, FPS: fps, comp: comp, virtual: mode == "extend"}
-	pick := "the screen to duplicate"
+	d := &Display{W: w, H: h, FPS: fps, comp: comp, virtual: mode == "extend", pos: pos}
+	hint := "smon: in the share picker choose the screen to duplicate"
 	switch mode {
 	case "extend":
-		if err := comp.CreateOutput(compositor.OutputName, w, h, fps, pos); err != nil {
+		if _, ok := comp.(compositor.PortalOutput); ok {
+			d.portalOut = true
+			d.before, _ = comp.Outputs() // best effort: names the output when the portal does not
+			hint = "smon: in the share dialog allow the new virtual display (on Plasma 6.8+ choose its resolution there)"
+			break
+		}
+		name, err := comp.CreateOutput(w, h, fps, pos)
+		if err != nil {
 			return nil, err
 		}
+		d.want = name
 		d.done = make(chan struct{})
 		go comp.WatchLayout(d.done)
-		pick = compositor.OutputName
+		hint = "smon: in the share picker choose " + name
 	case "mirror":
 	default:
 		return nil, fmt.Errorf("bad -mode %q (extend|mirror)", mode)
 	}
 	if _, err := os.Stat(tokenPath(mode)); err != nil {
-		hint := "smon: in the share picker choose " + pick
-		if comp.Name() == "hyprland" {
+		switch comp.Name() {
+		case "hyprland":
 			hint += " and tick \"Allow a restore token\" so later runs skip the picker"
+		case "sway":
+			hint += " (xdg-desktop-portal-wlr remembers the choice only with XDPW_PERSIST_MODE set, and never for extend, whose output name changes every run)"
 		}
 		fmt.Fprintln(os.Stderr, hint)
 	}
@@ -91,7 +105,9 @@ func (d *Display) Close() {
 			close(d.done)
 			d.done = nil
 		}
-		d.comp.DestroyOutput(compositor.OutputName)
+		if d.want != "" {
+			d.comp.DestroyOutput(d.want)
+		}
 	}
 }
 
@@ -105,12 +121,14 @@ func (d *Display) EnableTouch() (*touch.Touch, error) {
 	if d.output == "" {
 		return nil, errors.New("touch input: the portal did not say which output is shared")
 	}
-	// Map first, so the device never lands on the wrong output.
-	if err := d.comp.MapTouch(d.output); err != nil {
-		return nil, err
-	}
+	// The device first: KWin can only map one that exists. Nothing is
+	// injected before it is mapped.
 	t, err := touch.New(d.W, d.H)
 	if err != nil {
+		return nil, err
+	}
+	if err := d.comp.MapTouch(d.output); err != nil {
+		t.Close()
 		d.comp.UnmapTouch()
 		return nil, err
 	}
@@ -122,35 +140,104 @@ func (d *Display) EnableTouch() (*touch.Touch, error) {
 // tokenPath is where the portal restore token for mode is kept.
 func tokenPath(mode string) string { return filepath.Join(config.Dir(), "restore_token-"+mode) }
 
-// checkSource makes sure extend mode really captures SMON-1 (and not the
-// laptop panel, which would just duplicate it), and sizes mirror mode to the
-// screen that was picked.
+// checkSource makes sure extend mode really captures the virtual output (and
+// not the laptop panel, which would just duplicate it), learns its name when
+// the portal made it, and sizes mirror mode to the screen that was picked.
 func (d *Display) checkSource(mode string, props map[string]dbus.Variant) error {
-	name, _ := props["mapping_id"].Value().(string) // the output name (umbriel and xdg-desktop-portal-hyprland)
+	name, _ := props["mapping_id"].Value().(string) // the output name, where the portal sends it
 	// xdg-desktop-portal-hyprland ignores the requested source types: its
 	// picker also offers windows, regions and workspaces, which come back
-	// without mapping_id and would pass for SMON-1 below.
-	if st, ok := props["source_type"].Value().(uint32); ok && st != 1 { // 1: monitor
-		want := compositor.OutputName
+	// without mapping_id and would pass for the virtual output below.
+	if st, ok := props["source_type"].Value().(uint32); ok && st != 1 && (st != 4 || !d.portalOut) { // 1: monitor, 4: virtual
+		want := "the virtual display"
 		if mode == "mirror" {
 			want = "a screen"
+		} else if d.want != "" {
+			want = d.want
 		}
 		return fmt.Errorf("the share picker returned a window, region or workspace, not a whole screen: run again and choose %s", want)
 	}
-	if mode == "mirror" {
-		var size struct{ W, H int32 } // D-Bus (ii)
-		if props["size"].Store(&size) == nil && size.W > 0 && size.H > 0 {
-			d.W, d.H = int(size.W)&^1, int(size.H)&^1 // encoders want even sizes
+	if name == "" {
+		name = d.findOutput(props)
+	}
+	if mode == "mirror" || d.portalOut {
+		if size, ok := propPair(props, "size"); ok && size[0] > 0 && size[1] > 0 {
+			if d.portalOut && (size[0] != d.W || size[1] != d.H) {
+				fmt.Fprintf(os.Stderr, "smon: the virtual display is %dx%d, not the -w/-h %dx%d\n", size[0], size[1], d.W, d.H)
+			}
+			d.W, d.H = size[0]&^1, size[1]&^1 // encoders want even sizes
 		}
+	}
+	if mode == "mirror" {
 		fmt.Fprintf(os.Stderr, "smon: mirroring %s (%dx%d)\n", name, d.W, d.H)
 		d.output = name
 		return nil
 	}
-	if name != "" && name != compositor.OutputName {
-		return fmt.Errorf("the share picker returned %s, not %s: run again and choose %s", name, compositor.OutputName, compositor.OutputName)
+	if d.portalOut {
+		d.want, d.output = name, name
+		if name == "" {
+			fmt.Fprintln(os.Stderr, "smon: could not tell the virtual display's name: -pos and -input will not work")
+			return nil
+		}
+		fmt.Fprintf(os.Stderr, "smon: streaming %s (%dx%d)\n", name, d.W, d.H)
+		if p, ok := d.comp.(compositor.PortalOutput); ok {
+			if err := p.PlaceOutput(name, d.pos, d.W, d.H); err != nil {
+				fmt.Fprintf(os.Stderr, "smon: placing %s: %v\n", name, err)
+			}
+		}
+		return nil
 	}
-	d.output = compositor.OutputName
+	if name != "" && name != d.want {
+		return fmt.Errorf("the share picker returned %s, not %s: run again and choose %s", name, d.want, d.want)
+	}
+	d.output = d.want
 	return nil
+}
+
+// propPair reads a D-Bus (ii) stream property such as size or position.
+func propPair(props map[string]dbus.Variant, key string) ([2]int, bool) {
+	var p struct{ A, B int32 }
+	v, ok := props[key]
+	if !ok || v.Store(&p) != nil {
+		return [2]int{}, false
+	}
+	return [2]int{int(p.A), int(p.B)}, true
+}
+
+// findOutput names the captured output when the portal sends no mapping_id
+// (Plasma before 6.8, xdg-desktop-portal-wlr before 0.9): the output that
+// appeared since New for a portal-made one, else the output at the stream's
+// position. It returns "" when neither tells.
+func (d *Display) findOutput(props map[string]dbus.Variant) string {
+	if d.comp == nil {
+		return ""
+	}
+	outs, err := d.comp.Outputs()
+	if err != nil {
+		return ""
+	}
+	if d.portalOut {
+		seen := make(map[string]bool, len(d.before))
+		for _, o := range d.before {
+			seen[o.Name] = true
+		}
+		for _, o := range outs {
+			if !seen[o.Name] && o.Enabled {
+				return o.Name
+			}
+		}
+		return ""
+	}
+	pos, ok := propPair(props, "position")
+	if !ok {
+		return ""
+	}
+	for _, o := range outs {
+		if o.Enabled && o.Position.X == pos[0] && o.Position.Y == pos[1] {
+			return o.Name
+		}
+	}
+	return ""
 }
 
 // encoderTrial is how long a pipeline must run before its encoder counts as

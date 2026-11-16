@@ -1,4 +1,4 @@
-// Command smon creates a virtual second monitor on umbriel or Hyprland and
+// Command smon creates a virtual second monitor on umbriel, Hyprland, Sway or KDE Plasma and
 // streams it over WebRTC (browser), USB (Android, via adb), Miracast,
 // AirPlay or to an LG webOS TV.
 package main

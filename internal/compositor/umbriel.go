@@ -21,16 +21,17 @@ const posKey = "output." + OutputName + ".position"
 // so this also moves any physical touchscreen while smon runs with -input.
 const touchKey = "input.touch.map_to_output"
 
-func (u umbriel) CreateOutput(name string, w, h, fps int, pos string) error {
+func (u umbriel) CreateOutput(w, h, fps int, pos string) (string, error) {
+	name := OutputName
 	_ = exec.Command("umbriel", "output-destroy", name).Run() // stale output from a crash
 	if out, err := exec.Command("umbriel", "output-create", name, fmt.Sprintf("%dx%d@%d", w, h, fps)).CombinedOutput(); err != nil {
-		return fmt.Errorf("umbriel output-create: %v: %s", err, out)
+		return "", fmt.Errorf("umbriel output-create: %v: %s", err, out)
 	}
 	if err := u.layout(pos, w, h); err != nil {
 		u.DestroyOutput(name)
-		return err
+		return "", err
 	}
-	return nil
+	return name, nil
 }
 
 func (umbriel) DestroyOutput(name string) {

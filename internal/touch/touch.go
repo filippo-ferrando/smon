@@ -180,8 +180,15 @@ func (s *touchState) release(match func(id int) bool) []ev {
 	return append(out, ev{evSyn, synReport, 0})
 }
 
+// The touchscreen's identity, which compositors use to map it to an output.
+const (
+	Vendor  = 0x1209 // pid.codes test vendor
+	Product = 0x5340
+	Name    = "smon touchscreen"
+)
+
 // Touch is a virtual uinput touchscreen sized w x h. The compositor maps it to
-// an output through input.touch.map_to_output.
+// one output (see compositor.MapTouch).
 type Touch struct {
 	mu     sync.Mutex
 	f      *os.File
@@ -259,10 +266,10 @@ func New(w, h int) (*Touch, error) {
 	// struct uinput_setup { struct input_id { u16 bustype, vendor, product, version; } char name[80]; u32 ff_effects_max; }
 	var setup [92]byte
 	binary.LittleEndian.PutUint16(setup[0:], busVirtual)
-	binary.LittleEndian.PutUint16(setup[2:], 0x1209) // pid.codes test vendor
-	binary.LittleEndian.PutUint16(setup[4:], 0x5340)
+	binary.LittleEndian.PutUint16(setup[2:], Vendor)
+	binary.LittleEndian.PutUint16(setup[4:], Product)
 	binary.LittleEndian.PutUint16(setup[6:], 1)
-	copy(setup[8:87], "smon touchscreen")
+	copy(setup[8:87], Name)
 	if err := ioctlPtr(fd, uiDevSetup, unsafe.Pointer(&setup[0])); err != nil {
 		return fail("dev setup", err)
 	}

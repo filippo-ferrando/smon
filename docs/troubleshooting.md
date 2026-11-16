@@ -4,14 +4,19 @@ Start smon from a terminal: it logs the encoder benchmark, bitrate changes and e
 
 ### "no supported compositor found"
 
-smon didn't find Hyprland (`$HYPRLAND_INSTANCE_SIGNATURE` unset) or the `umbriel` command. Run
-it from inside your Wayland session, or force a backend with `-compositor umbriel|hyprland`.
+smon didn't find Hyprland, Sway or KDE Plasma from the session's environment variables, or the
+`umbriel` command. Run it from inside your Wayland session, or force a backend with
+`-compositor umbriel|hyprland|sway|kde`.
 Other compositors are [not supported yet](architecture.md#adding-a-compositor).
 
 ### The share picker shows up every time
 
 - On Hyprland, tick **Allow a restore token** in hyprland-share-picker.
-- In extend mode, make sure you pick **SMON-1**. If smon receives another screen, it forgets the
+- On Sway, start xdg-desktop-portal-wlr with `XDPW_PERSIST_MODE=permanent`. Extend mode still asks
+  every run, because Sway gives the output a new name each time.
+- On KDE Plasma, leave **Allow the application to do this without asking next time** ticked
+  (virtual displays are remembered from Plasma 6.3).
+- In extend mode, make sure you pick the virtual output. If smon receives another screen, it forgets the
   choice and exits so the next run asks again.
 - To reset the choice yourself, delete `~/.config/smon/restore_token-extend` or
   `restore_token-mirror`.

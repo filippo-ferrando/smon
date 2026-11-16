@@ -9,7 +9,7 @@ You can drag windows onto it, play sound on it, and with `-input`, control it by
 
 [![License: GPL-3.0-or-later](https://img.shields.io/badge/license-GPL--3.0--or--later-blue.svg)](LICENSE)
 [![Go](https://img.shields.io/badge/go-1.27-00ADD8.svg?logo=go&logoColor=white)](go.mod)
-![Wayland](https://img.shields.io/badge/wayland-umbriel%20%7C%20Hyprland-informational)
+![Wayland](https://img.shields.io/badge/wayland-umbriel%20%7C%20Hyprland%20%7C%20Sway%20%7C%20KDE-informational)
 
 [Features](#features) ·
 [Supported platforms](#supported-platforms) ·
@@ -23,7 +23,7 @@ You can drag windows onto it, play sound on it, and with `-input`, control it by
 
 ## Features
 
-- **Extend or mirror.** `extend` creates a new virtual output (`SMON-1`) that behaves like any
+- **Extend or mirror.** `extend` creates a new virtual output that behaves like any
   other monitor. `mirror` duplicates a screen you already have.
 - **Any browser is a receiver.** Low-latency H.264 over WebRTC to any device on your LAN, with
   no app to install. The page is protected by an access token.
@@ -47,9 +47,11 @@ You can drag windows onto it, play sound on it, and with `-input`, control it by
 | --- | --- | --- |
 | [umbriel](docs/compositors.md#umbriel) | Supported | Needs `xdg-desktop-portal-umbriel` |
 | [Hyprland](docs/compositors.md#hyprland) | Supported | 0.42 or newer, needs `xdg-desktop-portal-hyprland` |
+| [Sway](docs/compositors.md#sway) | Supported, untested on hardware | 1.8 or newer, needs `xdg-desktop-portal-wlr` (0.9+ recommended) |
+| [KDE Plasma](docs/compositors.md#kde-plasma) | Supported, untested on hardware | Plasma 6, needs `xdg-desktop-portal-kde`; 6.8+ to choose the size |
 | Others | Planned | See [Adding a compositor](docs/architecture.md#adding-a-compositor) |
 
-smon picks the compositor automatically. Use `-compositor umbriel|hyprland` to override.
+smon picks the compositor automatically. Use `-compositor umbriel|hyprland|sway|kde` to override.
 
 ### Receivers
 
@@ -71,8 +73,8 @@ sudo pacman -S --needed go gcc pkgconf pipewire wireplumber pipewire-pulse libpu
     gst-plugin-pipewire gst-plugin-va gst-plugins-ugly gst-libav
 ```
 
-Add the screencast portal for your compositor (`xdg-desktop-portal-umbriel` or
-`xdg-desktop-portal-hyprland`). Other distributions and optional extras are covered in
+Add the screencast portal for your compositor (`xdg-desktop-portal-umbriel`,
+`xdg-desktop-portal-hyprland`, `xdg-desktop-portal-wlr` for Sway or `xdg-desktop-portal-kde`). Other distributions and optional extras are covered in
 [Installation](docs/installation.md).
 
 Then build and run it:
@@ -85,7 +87,8 @@ make build
 ```
 
 smon prints a URL with an access token. Open it on the other device. The first run shows
-your compositor's screen-share picker: pick **SMON-1**. smon saves that choice, so later
+your compositor's screen-share picker: pick **SMON-1** (on Sway, the new `HEADLESS-<n>`
+output; on KDE, allow the new virtual display). smon saves that choice, so later
 runs skip the picker.
 
 > **Note:** the web viewer uses UDP and TCP on the `-addr` port (default `8080`). If a firewall is
@@ -106,11 +109,11 @@ smon cast [flags] <target>  cast to miracast:<name|mac>, airplay:<name|host:port
 | `-w`, `-h` | `1920`, `1080` | Output size (`-h` is height, not help) |
 | `-fps` | `30` | Frame rate |
 | `-kbps` | `8000` | Video bitrate (the ceiling when adaptive bitrate is on) |
-| `-pos right\|left\|above\|below` | layout | Initial placement of SMON-1 |
+| `-pos right\|left\|above\|below` | layout | Initial placement of the virtual output |
 | `-addr` | `:8080` | Listen address, TCP and UDP (`usb` uses only the port) |
 | `-input` | off | `web` and `usb` only: viewer touches control the shared screen |
 | `-audio` | `true` | Add the *Second Monitor (smon)* sound output |
-| `-compositor umbriel\|hyprland` | detected | Force a compositor backend |
+| `-compositor umbriel\|hyprland\|sway\|kde` | detected | Force a compositor backend |
 
 Some examples:
 
@@ -133,7 +136,7 @@ All commands, environment variables and files are in the [Usage guide](docs/usag
 | [Installation](docs/installation.md) | Requirements, packages, building, `/dev/uinput` access |
 | [Usage](docs/usage.md) | Commands, flags, extend and mirror modes, environment variables, state files |
 | [Receivers](docs/receivers.md) | Browser, USB, Miracast, AirPlay and webOS setup; firewall rules |
-| [Compositors](docs/compositors.md) | How smon behaves on umbriel and on Hyprland |
+| [Compositors](docs/compositors.md) | How smon behaves on umbriel, Hyprland, Sway and KDE Plasma |
 | [Audio](docs/audio.md) | The *Second Monitor (smon)* sound output |
 | [Touch input](docs/touch-input.md) | Using the tablet as a touchscreen, and security notes |
 | [Performance and limitations](docs/limitations.md) | Encoder choice, bitrate adaptation, known limits |
@@ -144,6 +147,8 @@ All commands, environment variables and files are in the [Usage guide](docs/usag
 
 - [x] umbriel
 - [x] Hyprland
+- [x] Sway
+- [x] KDE Plasma 6
 - [ ] More Wayland compositors
 
 Want smon on your compositor? Each backend is a small Go type. See

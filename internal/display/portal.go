@@ -83,8 +83,12 @@ func (d *Display) screencast(mode string) error {
 	}
 	session := dbus.ObjectPath(res["session_handle"].Value().(string))
 
+	srcType := uint32(1) // monitor
+	if d.portalOut {
+		srcType = 4 // virtual: the portal creates the output
+	}
 	opts := map[string]dbus.Variant{
-		"types":        dbus.MakeVariant(uint32(1)), // monitor
+		"types":        dbus.MakeVariant(srcType),
 		"cursor_mode":  dbus.MakeVariant(uint32(2)), // embedded
 		"persist_mode": dbus.MakeVariant(uint32(2)), // until revoked
 	}

@@ -44,18 +44,21 @@ Flags go after the command, for example `smon web -input -fps 60`.
 | `-addr` | `:8080` | `web`, `usb`, `cast webos:` | Listen address, TCP and UDP. `usb` uses only the port and always listens on 127.0.0.1. |
 | `-input` | `false` | `web`, `usb` | Viewer touches control the shared screen. See [Touch input](touch-input.md). |
 | `-audio` | `true` | all but `list` | Add the *Second Monitor (smon)* sound output. `-audio=false` streams video only. See [Audio](audio.md). |
-| `-compositor` | detected | all but `list` | `umbriel` or `hyprland`. |
+| `-compositor` | detected | all but `list` | `umbriel`, `hyprland`, `sway` or `kde`. |
 
 In mirror mode the stream has the size of the screen you pick, whatever `-w` and `-h` say.
 
 ### Compositor detection
 
-Without `-compositor`, smon uses Hyprland when `$HYPRLAND_INSTANCE_SIGNATURE` is set, otherwise
-umbriel when the `umbriel` command is on `PATH`. If neither applies it exits with an error.
+Without `-compositor`, smon uses, in order: Hyprland when `$HYPRLAND_INSTANCE_SIGNATURE` is set,
+Sway when `$SWAYSOCK` is set, KDE Plasma when `$KDE_FULL_SESSION=true` or `$XDG_CURRENT_DESKTOP`
+contains `KDE`, and umbriel when the `umbriel` command is on `PATH`. If none applies it exits
+with an error.
 
 ## Extend and mirror
 
-- **`-mode extend`** (default) creates a virtual output called **SMON-1** and streams it. The
+- **`-mode extend`** (default) creates a virtual output and streams it. It is called **SMON-1**
+  on umbriel and Hyprland, `HEADLESS-<n>` on Sway, and `Virtual-…` on KDE Plasma. The
   receiver becomes a second monitor: move windows to it, arrange it in your display settings.
   smon removes the output when it exits.
 - **`-mode mirror`** creates nothing and streams a screen you choose. The receiver duplicates
@@ -66,24 +69,28 @@ umbriel when the `umbriel` command is on `PATH`. If neither applies it exits wit
 smon captures through the xdg-desktop-portal ScreenCast interface, so the first run of each
 mode opens your compositor's share picker:
 
-- In **extend** mode, pick **SMON-1**.
+- In **extend** mode, pick **SMON-1** (Sway: the new `HEADLESS-<n>`; KDE: allow the new virtual display).
 - In **mirror** mode, pick the screen to duplicate.
 
 The choice is saved as a restore token in `~/.config/smon/restore_token-<mode>`, so later runs
 don't ask. On Hyprland, tick **Allow a restore token** in the picker, or it asks every time.
+On Sway the choice is remembered only in mirror mode, and only with `XDPW_PERSIST_MODE` set. See
+[Sway](compositors.md#share-picker-on-sway).
 
-If extend mode receives a screen other than SMON-1, smon forgets the saved choice and exits
+If extend mode receives a screen other than the virtual output, smon forgets the saved choice and exits
 with an error, so the next run asks again.
 
 ## Placement
 
-Where SMON-1 appears depends on the compositor:
+Where the virtual output appears depends on the compositor:
 
 - **umbriel**: SMON-1 follows your saved display layout, so move it with the displays plugin
   like any other monitor. `-pos` only sets an initial position. See
   [umbriel placement](compositors.md#placement-on-umbriel).
 - **Hyprland**: SMON-1 goes `auto-right` unless you pass `-pos` or have a monitor rule for it.
   See [Hyprland placement](compositors.md#placement-on-hyprland).
+- **Sway** and **KDE Plasma**: the compositor's own placement unless you pass `-pos`. Move it
+  later with your usual display tool.
 
 ## Environment variables
 
@@ -93,6 +100,8 @@ Where SMON-1 appears depends on the compositor:
 | `SMON_ABR=off` | Keep the bitrate fixed at `-kbps` instead of adapting to congestion. |
 | `ANDROID_SERIAL` | With several Android devices attached, the one `smon usb` uses (standard `adb` variable). |
 | `HYPRLAND_INSTANCE_SIGNATURE` | Set by Hyprland. Its presence selects the Hyprland backend. |
+| `SWAYSOCK` | Set by Sway. Its presence selects the Sway backend. |
+| `KDE_FULL_SESSION`, `XDG_CURRENT_DESKTOP` | Set by Plasma. They select the KDE backend. |
 
 ## Files
 

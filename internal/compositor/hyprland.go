@@ -65,17 +65,18 @@ func hyprOK(args ...string) error {
 	return nil
 }
 
-func (h *hyprland) CreateOutput(name string, width, height, fps int, pos string) error {
+func (h *hyprland) CreateOutput(width, height, fps int, pos string) (string, error) {
+	name := OutputName
 	_, _ = hyprctl("output", "remove", name) // stale output from a crash
 	where := "auto-right"
 	if pos != "" {
 		outs, err := h.Outputs()
 		if err != nil {
-			return err
+			return "", err
 		}
 		x, y, ok, err := placeXY(outs, name, pos, width, height)
 		if err != nil {
-			return err
+			return "", err
 		}
 		if ok {
 			where = fmt.Sprintf("%dx%d", x, y)
@@ -83,9 +84,9 @@ func (h *hyprland) CreateOutput(name string, width, height, fps int, pos string)
 	}
 	// The rule first, so the output comes up at the right mode and place.
 	if err := h.setMonitor(name, fmt.Sprintf("%dx%d@%d", width, height, fps), where); err != nil {
-		return err
+		return "", err
 	}
-	return hyprOK("output", "create", "headless", name)
+	return name, hyprOK("output", "create", "headless", name)
 }
 
 func (*hyprland) DestroyOutput(name string) { _, _ = hyprctl("output", "remove", name) }

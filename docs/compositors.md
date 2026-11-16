@@ -4,15 +4,20 @@ smon needs two things from a compositor: a way to create a virtual output, and a
 xdg-desktop-portal ScreenCast implementation to capture it. The portal part is the same
 everywhere. The output, placement and touch mapping are what each backend implements.
 
-| | umbriel | Hyprland |
-| --- | --- | --- |
-| Detected by | `umbriel` on `PATH` | `$HYPRLAND_INSTANCE_SIGNATURE` set |
-| Virtual output | `umbriel output-create` | `hyprctl output create headless` |
-| Default placement | Saved display layout | `auto-right` |
-| Share picker | umbriel share picker | hyprland-share-picker |
-| Touch mapping | All touchscreens | Only smon's touchscreen (with a fallback) |
+| | umbriel | Hyprland | Sway | KDE Plasma |
+| --- | --- | --- | --- | --- |
+| Detected by | `umbriel` on `PATH` | `$HYPRLAND_INSTANCE_SIGNATURE` set | `$SWAYSOCK` set | `$KDE_FULL_SESSION=true` or `KDE` in `$XDG_CURRENT_DESKTOP` |
+| Virtual output | `umbriel output-create` | `hyprctl output create headless` | `swaymsg create_output` | The portal (ScreenCast `VIRTUAL` source) |
+| Output name | `SMON-1` | `SMON-1` | `HEADLESS-<n>` | `Virtual-…` |
+| Size | `-w`/`-h`/`-fps` | `-w`/`-h`/`-fps` | `-w`/`-h`/`-fps` | Chosen in the portal dialog (6.8+), else 1920x1080 at 60 Hz |
+| Default placement | Saved display layout | `auto-right` | Sway's default | KWin's default |
+| Share picker | umbriel share picker | hyprland-share-picker | xdg-desktop-portal-wlr chooser | Plasma's share dialog |
+| Touch mapping | All touchscreens | Only smon's touchscreen (with a fallback) | Only smon's touchscreen | Only smon's touchscreen |
 
-Every feature works the same on both.
+Every feature works on all four, with the differences listed here.
+
+> **Note:** the Sway and KDE Plasma backends were written from the compositors' sources and are
+> covered by unit tests, but have not been run on real sessions yet. Reports are welcome.
 
 ## umbriel
 
@@ -81,6 +86,80 @@ duplicate (mirror), and tick **Allow a restore token** so later runs skip the pi
 touch panel keeps working on its own screen. If a hyprlang config rejects per-device rules,
 smon falls back to `input:touchdevice:output` (every touchscreen) and restores the previous
 value on exit.
+
+## Sway
+
+Requires Sway **1.8 or newer** (for `create_output` and `output … unplug`) and
+`xdg-desktop-portal-wlr`, ideally **0.9 or newer**.
+
+smon drives Sway with `swaymsg`. All changes are runtime commands. Nothing is written to your
+config files.
+
+### Virtual output on Sway
+
+`swaymsg create_output` adds a headless output. Sway names it itself (`HEADLESS-<n>`, a new
+number every time), so smon finds it by comparing the outputs before and after. smon then sets
+its mode to `-w`x`-h`@`-fps` and removes it on exit (`output … unplug`). The name is kept in
+`~/.config/smon/sway-output`, so a run after a crash removes the leftover output.
+
+### Placement on Sway
+
+With no `-pos`, Sway places the output itself (to the right of the others). `-pos
+right|left|above|below` places it next to your other monitors. Move it later with
+`swaymsg output HEADLESS-<n> pos X Y` or a tool such as wdisplays.
+
+### Share picker on Sway
+
+xdg-desktop-portal-wlr picks the output with the chooser set in its config (`chooser_type`,
+by default slurp, wmenu, wofi, rofi and others, whichever is installed). Pick the new
+`HEADLESS-<n>` output in extend mode.
+
+- The portal returns the output's name (`mapping_id`) from version 0.9. With older versions,
+  smon finds the output by its position.
+- The portal hands out restore tokens only when it runs with `XDPW_PERSIST_MODE=transient` or
+  `permanent` in its environment. Even then extend mode asks every time, because the token
+  names the output and Sway names it differently on each run.
+
+### Touch input on Sway
+
+`-input` maps only smon's touchscreen (`input 4617:21312:smon_touchscreen map_to_output …`),
+so a built-in touch panel keeps working on its own screen. On exit smon resets the rule to
+`map_to_output *`.
+
+## KDE Plasma
+
+Requires Plasma **6** with `xdg-desktop-portal-kde`, `kscreen-doctor` (for `-pos`) and
+`kwriteconfig6` (to clean up the touch mapping). Plasma installs all three.
+
+### Virtual output on KDE Plasma
+
+Plasma has no command to create an output. In extend mode smon asks the ScreenCast portal for a
+**virtual** source instead, and the portal creates the output (`Virtual-…`). KWin removes it
+when smon closes the portal session.
+
+- The portal decides the size. Plasma **6.8+** lets you choose a resolution in the share
+  dialog; earlier versions always use 1920x1080. `-w`/`-h` don't apply, and smon warns when
+  the size differs from them. The refresh rate is 60 Hz; smon still streams at `-fps`.
+- The portal names the output (`mapping_id`) from 6.8. On earlier versions smon finds it as the
+  output that appeared after the request.
+
+### Placement on KDE Plasma
+
+With no `-pos`, KWin places the output. `-pos right|left|above|below` moves it next to your
+other monitors with `kscreen-doctor` once it exists. You can also drag it in *System Settings →
+Display & Monitor*.
+
+### Share picker on KDE Plasma
+
+The first run of extend mode shows a dialog to create a virtual display for smon. Accept it,
+and keep **Allow the application to do this without asking next time** ticked: from Plasma 6.3
+later runs then skip the dialog and recreate the display at the same size. In mirror mode pick
+the screen to duplicate.
+
+### Touch input on KDE Plasma
+
+`-input` maps only smon's touchscreen, through KWin's input-device D-Bus interface
+(`outputName`). KWin saves that mapping in `~/.config/kcminputrc`. smon removes its entry on exit.
 
 ## Other compositors
 

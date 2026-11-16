@@ -19,6 +19,8 @@ exit. How the mapping is scoped depends on the compositor:
   while smon runs. See [umbriel](compositors.md#touch-input-on-umbriel).
 - **Hyprland** maps only smon's touchscreen, falling back to all touchscreens if the config
   rejects per-device rules. See [Hyprland](compositors.md#touch-input-on-hyprland).
+- **Sway** and **KDE Plasma** map only smon's touchscreen. See
+  [Sway](compositors.md#touch-input-on-sway) and [KDE Plasma](compositors.md#touch-input-on-kde-plasma).
 
 Your user needs write access to `/dev/uinput`. See
 [Touch input permissions](installation.md#touch-input-permissions).

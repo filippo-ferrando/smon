@@ -14,7 +14,7 @@ playfair code, so you need a C toolchain and the GStreamer headers to build it.
 
 | Needed for | Requirement |
 | --- | --- |
-| Compositor | umbriel with `xdg-desktop-portal-umbriel`, **or** Hyprland 0.42+ (provides `hyprctl`) with `xdg-desktop-portal-hyprland` |
+| Compositor | umbriel with `xdg-desktop-portal-umbriel`, **or** Hyprland 0.42+ (provides `hyprctl`) with `xdg-desktop-portal-hyprland`, **or** Sway 1.8+ (provides `swaymsg`) with `xdg-desktop-portal-wlr`, **or** KDE Plasma 6 with `xdg-desktop-portal-kde`, `kscreen-doctor` and `kwriteconfig6` |
 | Screen capture | PipeWire and WirePlumber |
 | Video pipeline | GStreamer 1.2x with `pipewiresrc`, `h264parse`, `rtph264pay`, `mpegtsmux`, `rtpmp2tpay` |
 | H.264 encoder | `vah264enc` (hardware, VA-API) and/or `x264enc` (software) |
@@ -48,6 +48,8 @@ sudo pacman -S --needed pipewire wireplumber pipewire-pulse libpulse \
 ```sh
 # umbriel: install umbriel and xdg-desktop-portal-umbriel
 sudo pacman -S --needed hyprland xdg-desktop-portal-hyprland   # Hyprland
+sudo pacman -S --needed sway xdg-desktop-portal-wlr             # Sway
+sudo pacman -S --needed xdg-desktop-portal-kde libkscreen kconfig   # KDE Plasma (already there with plasma)
 ```
 
 **Optional, per feature**

@@ -6,9 +6,11 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strings"
 )
 
-// OutputName is the virtual output smon creates in extend mode.
+// OutputName is the virtual output smon creates in extend mode where the
+// compositor lets it pick the name (umbriel, Hyprland).
 const OutputName = "SMON-1"
 
 // Compositor is everything smon needs from the compositor beyond the
@@ -16,15 +18,27 @@ const OutputName = "SMON-1"
 type Compositor interface {
 	Name() string
 	// CreateOutput adds the virtual output (removing a stale one from a crash
-	// first) and places it: pos is "" (compositor default) or right|left|above|below.
-	CreateOutput(name string, w, h, fps int, pos string) error
+	// first), places it, and returns its name: pos is "" (compositor default)
+	// or right|left|above|below. It returns "" when the ScreenCast portal
+	// creates the output instead (see PortalOutput).
+	CreateOutput(w, h, fps int, pos string) (string, error)
 	DestroyOutput(name string)
 	// WatchLayout runs until done is closed; a no-op where it does not apply.
 	WatchLayout(done chan struct{})
-	// MapTouch maps smon's virtual touchscreen to an output; UnmapTouch undoes it.
+	// MapTouch maps smon's virtual touchscreen, which already exists, to an
+	// output; UnmapTouch undoes it after the touchscreen is gone.
 	MapTouch(output string) error
 	UnmapTouch()
 	Outputs() ([]Output, error)
+}
+
+// PortalOutput is implemented by compositors whose virtual output is created
+// by the ScreenCast portal (source type VIRTUAL) rather than by CreateOutput,
+// and removed when the portal session closes.
+type PortalOutput interface {
+	// PlaceOutput positions the portal-made output once its name is known;
+	// pos is as for CreateOutput.
+	PlaceOutput(name, pos string, w, h int) error
 }
 
 // Output is one monitor and where it sits in the layout, in logical pixels.
@@ -35,25 +49,34 @@ type Output struct {
 	Logical  struct{ Width, Height int } `json:"logical_size"`
 }
 
-// Detect picks the backend: the -compositor flag if given, else
-// Hyprland when running inside it, else umbriel when it is installed.
+// Detect picks the backend: the -compositor flag if given, else the one the
+// session runs (Hyprland, Sway, KDE Plasma), else umbriel when it is installed.
 func Detect(flag string) (Compositor, error) {
 	switch flag {
 	case "umbriel":
 		return umbriel{}, nil
 	case "hyprland":
 		return &hyprland{}, nil
+	case "sway":
+		return &sway{}, nil
+	case "kde":
+		return &kde{}, nil
 	case "":
 	default:
-		return nil, fmt.Errorf("bad -compositor %q (umbriel|hyprland)", flag)
+		return nil, fmt.Errorf("bad -compositor %q (umbriel|hyprland|sway|kde)", flag)
 	}
-	if os.Getenv("HYPRLAND_INSTANCE_SIGNATURE") != "" {
+	switch {
+	case os.Getenv("HYPRLAND_INSTANCE_SIGNATURE") != "":
 		return &hyprland{}, nil
+	case os.Getenv("SWAYSOCK") != "":
+		return &sway{}, nil
+	case os.Getenv("KDE_FULL_SESSION") == "true", strings.Contains(os.Getenv("XDG_CURRENT_DESKTOP"), "KDE"):
+		return &kde{}, nil
 	}
 	if _, err := exec.LookPath("umbriel"); err == nil {
 		return umbriel{}, nil
 	}
-	return nil, fmt.Errorf("no supported compositor found (umbriel or Hyprland); use -compositor to force one")
+	return nil, fmt.Errorf("no supported compositor found (umbriel, Hyprland, Sway or KDE Plasma); use -compositor to force one")
 }
 
 // placeXY returns where a w x h output goes when placed pos (right|left|above|below)
