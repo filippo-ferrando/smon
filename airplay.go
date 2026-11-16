@@ -27,8 +27,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/pion/rtp"
-	"github.com/pion/rtp/codecs"
 	"howett.net/plist"
 
 	"smon/playfair"
@@ -287,8 +285,7 @@ func castAirPlay(d *Display, addr string, kbps int) error {
 
 // mirror reads H.264 RTP from gstreamer and writes AirPlay mirror packets.
 func mirror(udp *net.UDPConn, w io.Writer, stream cipher.Stream, width, height int) error {
-	var depay codecs.H264Packet // emits Annex-B with start codes
-	var au []byte
+	var asm auAssembler
 	var sps, pps []byte
 	buf := make([]byte, 65536)
 	for {
@@ -296,16 +293,8 @@ func mirror(udp *net.UDPConn, w io.Writer, stream cipher.Stream, width, height i
 		if err != nil {
 			return err
 		}
-		var p rtp.Packet
-		if p.Unmarshal(buf[:n]) != nil {
-			continue
-		}
-		nal, err := depay.Unmarshal(p.Payload)
-		if err != nil {
-			continue
-		}
-		au = append(au, nal...)
-		if !p.Marker {
+		au := asm.push(buf[:n])
+		if au == nil {
 			continue
 		}
 
@@ -327,7 +316,6 @@ func mirror(udp *net.UDPConn, w io.Writer, stream cipher.Stream, width, height i
 				avcc = append(avcc, n...)
 			}
 		}
-		au = au[:0]
 		ts := ntpNow(false)
 		if (newCodec || idr) && sps != nil && pps != nil {
 			if _, err := w.Write(codecPacket(sps, pps, width, height, ts)); err != nil {

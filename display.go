@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -20,6 +21,9 @@ const outputName = "SMON-1"
 type Display struct {
 	W, H, FPS int
 	virtual   bool
+	output    string        // captured output name (SMON-1, or the mirrored screen)
+	touch     *Touch        // virtual touchscreen, if input is enabled
+	cleanup   []func()      // extra teardown, run by Close
 	done      chan struct{} // stops the layout watcher
 	node      uint32
 	fd        *os.File
@@ -62,6 +66,15 @@ func NewDisplay(w, h, fps int, pos, mode string) (*Display, error) {
 }
 
 func (d *Display) Close() {
+	for i := len(d.cleanup) - 1; i >= 0; i-- { // last registered first, like defers
+		d.cleanup[i]()
+	}
+	d.cleanup = nil
+	if d.touch != nil {
+		d.touch.Close()
+		d.touch = nil
+		exec.Command("umbriel", "config", "unset", touchKey).Run()
+	}
 	if d.fd != nil {
 		d.fd.Close()
 	}
@@ -79,6 +92,34 @@ func (d *Display) Close() {
 }
 
 const posKey = "output." + outputName + ".position"
+
+// touchKey maps touchscreens to one output. umbriel has no per-device mapping,
+// so this also moves any physical touchscreen while smon runs with -input.
+const touchKey = "input.touch.map_to_output"
+
+// AtClose registers f to run when the display closes (also on Ctrl-C), in
+// reverse order of registration.
+func (d *Display) AtClose(f func()) { d.cleanup = append(d.cleanup, f) }
+
+// EnableTouch creates a virtual touchscreen mapped to the captured output and
+// returns it; viewer touches injected into it land on that output.
+func (d *Display) EnableTouch() (*Touch, error) {
+	if d.output == "" {
+		return nil, fmt.Errorf("touch input: the portal did not say which output is shared")
+	}
+	// Map first, so the device never lands on the wrong output.
+	if out, err := exec.Command("umbriel", "config", "set", touchKey, strconv.Quote(d.output)).CombinedOutput(); err != nil {
+		return nil, fmt.Errorf("umbriel config set %s: %v: %s", touchKey, err, out)
+	}
+	t, err := newTouch(d.W, d.H)
+	if err != nil {
+		exec.Command("umbriel", "config", "unset", touchKey).Run()
+		return nil, err
+	}
+	d.touch = t
+	fmt.Fprintf(os.Stderr, "smon: touch input enabled on %s\n", d.output)
+	return t, nil
+}
 
 func unsetPos() { exec.Command("umbriel", "config", "unset", posKey).Run() }
 
@@ -269,11 +310,13 @@ func (d *Display) checkSource(mode string, props map[string]dbus.Variant) error 
 			d.W, d.H = int(size.W)&^1, int(size.H)&^1 // encoders want even sizes
 		}
 		fmt.Fprintf(os.Stderr, "smon: mirroring %s (%dx%d)\n", name, d.W, d.H)
+		d.output = name
 		return nil
 	}
 	if name != "" && name != outputName {
 		return fmt.Errorf("the share picker returned %s, not %s: run again and choose %s", name, outputName, outputName)
 	}
+	d.output = outputName
 	return nil
 }
 

@@ -84,7 +84,7 @@ func findMiracast(bus *dbus.Conn, scan time.Duration) ([]p2pPeer, error) {
 	return peers, nil
 }
 
-func castMiracast(d *Display, target string, kbps int) error {
+func castMiracast(d *Display, target string, kbps int, audio *Audio) error {
 	bus, err := dbus.SystemBus()
 	if err != nil {
 		return err
@@ -149,11 +149,17 @@ func castMiracast(d *Display, target string, kbps int) error {
 	}
 	log.Printf("miracast: sink connected from %s", c.RemoteAddr())
 
-	return runWFD(c, func(p wfdParams) (func(), <-chan error, error) {
+	src := "" // smon output device's monitor; "" sends video only
+	if audio != nil {
+		if src, err = audio.Source(); err != nil {
+			log.Printf("audio off: %v", err)
+		}
+	}
+	return runWFD(c, src != "", func(p wfdParams) (func(), <-chan error, error) {
 		host := c.RemoteAddr().(*net.TCPAddr).IP.String()
 		tail := fmt.Sprintf("mpegtsmux name=mux alignment=7 ! rtpmp2tpay pt=33 ! udpsink host=%s port=%d sync=false", host, p.Port)
 		if p.Audio {
-			tail += " pulsesrc device=@DEFAULT_MONITOR@ ! audioconvert ! audioresample ! audio/x-raw,rate=48000,channels=2 ! avenc_aac ! aacparse ! queue ! mux."
+			tail += " pulsesrc device=" + src + " ! audioconvert ! audioresample ! audio/x-raw,rate=48000,channels=2 ! avenc_aac ! aacparse ! queue ! mux."
 		}
 		return startGst(d.Pipeline(kbps, p.W, p.H, p.FPS, tail))
 	})

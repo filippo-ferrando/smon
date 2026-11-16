@@ -26,7 +26,7 @@ func TestWFDHandshake(t *testing.T) {
 			res <- err
 			return
 		}
-		res <- runWFD(c, func(p wfdParams) (func(), <-chan error, error) {
+		res <- runWFD(c, true, func(p wfdParams) (func(), <-chan error, error) {
 			got = p
 			return func() { stopped = true }, make(chan error), nil
 		})

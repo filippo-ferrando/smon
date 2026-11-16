@@ -66,13 +66,13 @@ func list() error {
 	return nil
 }
 
-func cast(d *Display, target string, kbps int, addr string) error {
+func cast(d *Display, target string, kbps int, addr string, audio *Audio) error {
 	proto, name, _ := strings.Cut(target, ":")
 	switch proto {
 	case "webos":
-		return castWebOS(d, name, kbps, addr)
+		return castWebOS(d, name, kbps, addr, audio)
 	case "miracast":
-		return castMiracast(d, name, kbps)
+		return castMiracast(d, name, kbps, audio)
 	case "airplay":
 		if strings.Contains(name, ":") { // host:port given directly
 			return castAirPlay(d, name, kbps)

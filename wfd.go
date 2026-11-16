@@ -216,8 +216,8 @@ func parseSinkCaps(body string) (wfdParams, string, error) {
 }
 
 // runWFD drives one sink connection until teardown. play starts the stream
-// and returns a func that stops it.
-func runWFD(c net.Conn, play func(wfdParams) (stop func(), done <-chan error, err error)) error {
+// and returns a func that stops it. AAC is offered only if sendAudio.
+func runWFD(c net.Conn, sendAudio bool, play func(wfdParams) (stop func(), done <-chan error, err error)) error {
 	w := &wfdConn{c: c, pending: map[string]chan *rtspMsg{}, reqs: make(chan *rtspMsg, 8), closed: make(chan struct{})}
 	defer c.Close()
 	go w.readLoop()
@@ -242,6 +242,10 @@ func runWFD(c net.Conn, play func(wfdParams) (stop func(), done <-chan error, er
 	if err != nil {
 		return fmt.Errorf("M3: %w", err)
 	}
+	if !p.Audio && sendAudio {
+		log.Print("miracast: the sink takes no AAC audio; video only")
+	}
+	p.Audio = p.Audio && sendAudio
 	audio := "none"
 	if p.Audio {
 		audio = "AAC 00000001 00"

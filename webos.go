@@ -99,7 +99,7 @@ func webosOpen(ws *websocket.Conn, url string) error {
 }
 
 // castWebOS serves the WebRTC page and points the TV's browser at it.
-func castWebOS(d *Display, ip string, kbps int, addr string) error {
+func castWebOS(d *Display, ip string, kbps int, addr string, audio *Audio) error {
 	ws, err := webosDial(ip)
 	if err != nil {
 		return fmt.Errorf("webos: %s not reachable on 3000/3001: %w", ip, err)
@@ -116,9 +116,9 @@ func castWebOS(d *Display, ip string, kbps int, addr string) error {
 	local := c.LocalAddr().(*net.UDPAddr).IP.String()
 	c.Close()
 
-	return serveWeb(d, addr, kbps, func(port int, token string) error {
+	return serveWeb(d, addr, kbps, webOpts{audio: audio, ready: func(port int, token string) error { // view-only: no touch on a TV
 		url := fmt.Sprintf("http://%s:%d/?t=%s", local, port, token)
 		log.Printf("webos: opening %s on the TV", url)
 		return webosOpen(ws, url)
-	})
+	}})
 }

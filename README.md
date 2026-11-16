@@ -3,18 +3,20 @@
 smon creates a virtual output on the umbriel compositor and streams it to:
 
 - **a browser** over WebRTC (any device on the LAN),
+- **an Android tablet over USB** (adb), no Wi-Fi needed,
 - **Miracast** sinks over Wi-Fi Direct (through NetworkManager),
 - **AirPlay** open receivers (UxPlay, RPiPlay),
 - **LG webOS TVs**: opens the TV's own browser on the WebRTC page.
 
 ```
 go build -o smon .
-smon web  [-addr :8080]                   # prints a URL with an access token
+smon web  [-addr :8080] [-input]          # prints a URL with an access token
+smon usb  [-addr :8080] [-input]          # Android over USB: opens the page on the tablet
 smon list                                 # AirPlay (mDNS) + Miracast (P2P scan)
 smon cast miracast:<name|mac>
 smon cast airplay:<name|host:port>
 smon cast webos:<tv-ip>                   # first time: press Allow on the TV
-flags: -mode extend|mirror -w 1920 -h 1080 -fps 30 -kbps 8000 [-pos right|left|above|below]
+flags: -mode extend|mirror -w 1920 -h 1080 -fps 30 -kbps 8000 [-pos right|left|above|below] [-audio=false]
 ```
 
 **Placement:** SMON-1 follows your saved display layout (`~/.config/umbriel/outputs.toml`, written by the
@@ -30,13 +32,60 @@ mode pick the screen to duplicate. The choice is saved in `~/.config/smon/restor
 so later runs don't ask. If extend mode gets a screen other than SMON-1, smon forgets the choice
 and exits with an error, so the next run asks again. smon removes the virtual output when it exits.
 
+## Audio
+
+While smon streams, a new sound output called **Second Monitor (smon)** appears in your sound
+settings (pavucontrol, the desktop's volume menu, …). smon never switches to it on its own: pick it
+as the output, globally or per app, and that sound plays on the receiver instead of here. Switch back
+any time. When smon exits the device goes away and its streams fall back to your default output.
+If you make it the *default* output, WirePlumber remembers that, so on the next run it becomes the
+default again by itself as soon as it appears. Choose another output to undo that.
+
+- Browser (web, webOS): Opus over WebRTC. USB: Opus over the WebSocket, decoded with WebCodecs.
+- Miracast: AAC in the MPEG-TS, when the sink advertises AAC (smon offers it only when audio is on).
+- Browsers keep the page silent until a gesture, so **tap the page once** (a "tap for sound" hint
+  shows until then). On a TV, press OK on the remote.
+- `-audio=false` streams video only. If `opusenc` or `pulsesrc` is missing, smon warns and streams
+  video only.
+
+## Touch input
+
+With `-input` (web and usb only), touches on the tablet act as a real touchscreen on the shared screen:
+tap, drag, swipe to scroll, pinch to zoom, all handled by the apps' own touch support. smon creates
+a virtual touchscreen through `/dev/uinput` and maps it with `input.touch.map_to_output` (a runtime
+override, removed on exit). That umbriel setting covers every touchscreen, so a built-in touch panel
+also maps to the shared screen while smon runs.
+
+Input is off by default because anyone holding the URL token can control the desktop. Over Wi-Fi
+the URL travels as plain HTTP. The webOS path is always view-only.
+
+Use the corner button for fullscreen; it appears for a few seconds after each touch.
+
+## USB (Android)
+
+1. On the tablet, enable *Developer options → USB debugging*, plug it in and accept the prompt.
+2. Run `smon usb` (add `-input` for touch). smon runs `adb reverse` on the port and opens
+   `http://localhost:<port>/` in the tablet's default browser (Chrome recommended).
+
+`adb reverse` carries only TCP, so over USB the page skips WebRTC: it receives H.264 over a
+WebSocket and decodes it with WebCodecs. WebCodecs works because `localhost` is a secure context.
+smon listens only on 127.0.0.1 in this mode, so it needs no firewall rule. On exit it removes the
+reverse mapping. With several devices attached, pick one with `ANDROID_SERIAL=<serial>`.
+
+Fallback for any tablet: turn on *USB tethering* on the tablet and run plain `smon web`. smon
+prints a URL for the tethering interface too.
+
 ## Requirements
 
 - umbriel, xdg-desktop-portal-umbriel, PipeWire
 - GStreamer 1.2x with `pipewiresrc`, `vah264enc` or `x264enc`, `h264parse`, `rtph264pay`,
-  `mpegtsmux`, `rtpmp2tpay`, `avenc_aac`, `pulsesrc`
+  `mpegtsmux`, `rtpmp2tpay`, `avenc_aac`, `pulsesrc`, plus `opusenc` + `rtpopuspay` for browser/USB audio
+  (gst-plugins-base, gst-plugins-good)
+- Audio: `pactl` (works with pipewire-pulse)
 - Miracast: NetworkManager with a `wifi-p2p` device, plus dnsmasq when we end up group owner
 - AirPlay: avahi-daemon (`avahi-browse`), and cgo (for the playfair code)
+- USB: `adb` (android-tools)
+- Touch input: write access to `/dev/uinput` (for example a `uaccess` udev rule, or the `input` group)
 
 ## Firewall
 
@@ -55,7 +104,9 @@ connection, enable *Settings → General → Devices → External Devices → TV
   A 1-second GOP covers it instead.
 - Miracast negotiates 1920x1080p30 when the sink supports it, otherwise 1280x720p30. AAC audio is sent
   when the sink advertises it.
-- The web viewer is view-only (no input back to the desktop).
+- AirPlay mirroring carries no audio (AirPlay audio is a separate encrypted stream smon doesn't implement).
+- Browser audio and video are not lip-synced to each other; both are low-latency, so the drift is small.
+- Touch input supports touch only (no keyboard), and only in the browser viewer.
 
 ## License
 

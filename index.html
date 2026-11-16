@@ -1,24 +1,47 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-input="0" data-audio="0">
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
 <title>Second Monitor</title>
 <style>
-  html, body { margin: 0; height: 100%; background: #000; }
-  video { width: 100vw; height: 100vh; object-fit: contain; display: block; }
-  #msg { position: fixed; top: 8px; left: 8px; color: #ccc; font: 14px system-ui, sans-serif; }
+  html, body { margin: 0; height: 100%; background: #000; overflow: hidden; overscroll-behavior: none; }
+  video, canvas { width: 100vw; height: 100vh; object-fit: contain; display: block;
+    touch-action: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
+  canvas { display: none; }
+  #msg { position: fixed; top: 8px; left: 8px; color: #ccc; font: 14px system-ui, sans-serif; pointer-events: none; }
+  #fs { position: fixed; top: 8px; right: 8px; width: 44px; height: 44px; padding: 10px; border: 0; border-radius: 8px;
+    background: rgba(40,40,40,.7); color: #eee; opacity: 0; pointer-events: none; transition: opacity .3s; }
+  #fs.show { opacity: 1; pointer-events: auto; }
+  #snd { position: fixed; bottom: 8px; left: 8px; padding: 6px 10px; border-radius: 8px; background: rgba(40,40,40,.7);
+    color: #eee; font: 14px system-ui, sans-serif; pointer-events: none; display: none; }
 </style>
 <video id="v" muted autoplay playsinline></video>
+<canvas id="c"></canvas>
 <div id="msg">connecting…</div>
+<div id="snd">tap for sound</div>
+<button id="fs" aria-label="Toggle fullscreen"><svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></button>
 <script>
-const v = document.getElementById('v'), msg = document.getElementById('msg');
-async function start() {
+const INPUT = document.documentElement.dataset.input === '1';
+const AUDIO = document.documentElement.dataset.audio === '1';
+const v = document.getElementById('v'), c = document.getElementById('c');
+const msg = document.getElementById('msg'), fs = document.getElementById('fs');
+let surface = v, send = null;
+
+// --- WebRTC (LAN) ---
+async function startRTC() {
   const pc = new RTCPeerConnection();
   pc.addTransceiver('video', { direction: 'recvonly' });
-  pc.ontrack = e => { v.srcObject = e.streams[0] || new MediaStream([e.track]); msg.textContent = ''; };
+  if (AUDIO) pc.addTransceiver('audio', { direction: 'recvonly' });
+  if (INPUT) {
+    const dc = pc.createDataChannel('input');
+    dc.onopen = () => send = m => dc.readyState === 'open' && dc.send(m);
+    dc.onclose = () => send = null;
+  }
+  const tracks = []; // video and audio arrive as separate ontrack events: keep both
+  pc.ontrack = e => { tracks.push(e.track); v.srcObject = new MediaStream(tracks); msg.textContent = ''; };
   pc.onconnectionstatechange = () => {
     if (['failed', 'disconnected'].includes(pc.connectionState)) {
-      msg.textContent = 'reconnecting…'; pc.close(); setTimeout(start, 1000);
+      msg.textContent = 'reconnecting…'; send = null; pc.close(); setTimeout(startRTC, 1000);
     }
   };
   await pc.setLocalDescription(await pc.createOffer());
@@ -28,7 +51,128 @@ async function start() {
   if (!res.ok) { msg.textContent = 'error: ' + await res.text(); return; }
   await pc.setRemoteDescription(await res.json());
 }
-v.ondblclick = () => document.fullscreenElement ? document.exitFullscreen() : v.requestFullscreen();
-start().catch(e => msg.textContent = 'error: ' + e);
+
+// --- WebSocket + WebCodecs (USB via adb reverse: TCP only, localhost is a secure context) ---
+function codecFor(au) { // avc1.PPCCLL from the SPS
+  const h = n => n.toString(16).padStart(2, '0');
+  for (let i = 0; i + 6 < au.length; i++)
+    if (au[i] === 0 && au[i + 1] === 0 && au[i + 2] === 1 && (au[i + 3] & 0x1f) === 7)
+      return 'avc1.' + h(au[i + 4]) + h(au[i + 5]) + h(au[i + 6]);
+  return 'avc1.42e01f';
+}
+function startWS() {
+  v.style.display = 'none'; c.style.display = 'block'; surface = c;
+  const ctx = c.getContext('2d');
+  const ws = new WebSocket(`ws://${location.host}/ws${location.search}`);
+  ws.binaryType = 'arraybuffer';
+  let dec = null, ts = 0, waitKey = true;
+  ws.onopen = () => { if (INPUT) send = m => ws.readyState === 1 && ws.send(m); };
+  ws.onmessage = e => {
+    const b = new Uint8Array(e.data), key = (b[0] & 1) === 1, au = b.subarray(1);
+    if (b[0] & 2) { playOpus(au); return; } // audio frame
+    if (!dec || dec.state === 'closed') {
+      if (!key) return;
+      dec = new VideoDecoder({
+        output: f => {
+          if (c.width !== f.displayWidth || c.height !== f.displayHeight) { c.width = f.displayWidth; c.height = f.displayHeight; }
+          ctx.drawImage(f, 0, 0); f.close(); msg.textContent = '';
+        },
+        error: err => { msg.textContent = 'decoder: ' + err.message; waitKey = true; },
+      });
+      dec.configure({ codec: codecFor(au), optimizeForLatency: true });
+    }
+    if (dec.decodeQueueSize > 3) waitKey = true; // falling behind: skip to the next keyframe
+    if (waitKey && !key) return;
+    waitKey = false;
+    dec.decode(new EncodedVideoChunk({ type: key ? 'key' : 'delta', timestamp: ts += 33333, data: au }));
+  };
+  ws.onclose = () => {
+    send = null; msg.textContent = 'reconnecting…';
+    try { dec && dec.close(); } catch {}
+    setTimeout(startWS, 1000);
+  };
+}
+
+// --- sound ---
+// Browsers start media silent until a user gesture: the first tap/click/key unlocks it.
+// WebRTC plays through the <video>; the WebSocket path decodes Opus with WebCodecs into an AudioContext.
+const snd = document.getElementById('snd');
+let actx = null, adec = null, aNext = 0, ats = 0;
+function playOpus(frame) {
+  if (!actx || actx.state !== 'running' || !('AudioDecoder' in window)) return;
+  if (!adec || adec.state === 'closed') {
+    adec = new AudioDecoder({
+      output: d => {
+        const buf = actx.createBuffer(d.numberOfChannels, d.numberOfFrames, d.sampleRate);
+        for (let i = 0; i < d.numberOfChannels; i++) d.copyTo(buf.getChannelData(i), { planeIndex: i, format: 'f32-planar' });
+        d.close();
+        const now = actx.currentTime;
+        if (aNext < now + 0.01 || aNext > now + 0.2) aNext = now + 0.05; // underrun or drift: re-anchor, bounded latency
+        const s = actx.createBufferSource(); s.buffer = buf; s.connect(actx.destination); s.start(aNext);
+        aNext += buf.duration;
+      },
+      error: () => { adec = null; },
+    });
+    adec.configure({ codec: 'opus', sampleRate: 48000, numberOfChannels: 2 });
+  }
+  adec.decode(new EncodedAudioChunk({ type: 'key', timestamp: ats += 10000, data: frame }));
+}
+function unlockSound() {
+  if (!AUDIO) return;
+  if (surface === v) { v.muted = false; v.play().catch(() => {}); }
+  else { actx = actx || new AudioContext({ latencyHint: 'interactive', sampleRate: 48000 }); actx.resume(); }
+  snd.style.display = 'none';
+}
+if (AUDIO) {
+  snd.style.display = 'block';
+  for (const t of ['pointerup', 'click', 'keydown']) window.addEventListener(t, unlockSound, true);
+}
+
+// --- touch input ---
+const down = new Set();
+function onPointer(e) {
+  showFs();
+  if (!INPUT) return;
+  e.preventDefault();
+  const w = surface === v ? v.videoWidth : c.width, h = surface === v ? v.videoHeight : c.height;
+  if (!send || !w || !h) return;
+  const r = surface.getBoundingClientRect(), s = Math.min(r.width / w, r.height / h); // object-fit: contain
+  const x = (e.clientX - r.left - (r.width - w * s) / 2) / (w * s);
+  const y = (e.clientY - r.top - (r.height - h * s) / 2) / (h * s);
+  let t;
+  if (e.type === 'pointerdown') {
+    if (x < 0 || x > 1 || y < 0 || y > 1) return; // tap on the letterbox
+    surface.setPointerCapture(e.pointerId); down.add(e.pointerId); t = 'd';
+  } else if (!down.has(e.pointerId)) {
+    return;
+  } else if (e.type === 'pointermove') {
+    t = 'm';
+  } else {
+    down.delete(e.pointerId); t = 'u';
+  }
+  send(JSON.stringify({ t, id: e.pointerId, x, y }));
+}
+for (const el of [v, c]) {
+  for (const t of ['pointerdown', 'pointermove', 'pointerup', 'pointercancel']) el.addEventListener(t, onPointer);
+  el.addEventListener('contextmenu', e => e.preventDefault()); // long press
+}
+
+// --- fullscreen button (double-tap would be a touch on the desktop) ---
+let fsTimer;
+function showFs() { fs.classList.add('show'); clearTimeout(fsTimer); fsTimer = setTimeout(() => fs.classList.remove('show'), 3000); }
+fs.onclick = () => document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen();
+showFs();
+
+// keep the tablet awake (needs a secure context, so only over USB/localhost)
+async function wake() { try { if (document.visibilityState === 'visible') await navigator.wakeLock?.request('screen'); } catch {} }
+document.addEventListener('visibilitychange', wake); wake();
+
+// localhost means adb reverse (TCP only): WebRTC can't get through, WebCodecs must.
+if (location.hostname === 'localhost') {
+  if ('VideoDecoder' in window) startWS();
+  else msg.textContent = 'this browser lacks WebCodecs: open the page in Chrome';
+} else {
+  startRTC().catch(e => msg.textContent = 'error: ' + e);
+}
 </script>
 </html>
