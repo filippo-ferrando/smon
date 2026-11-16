@@ -1,6 +1,6 @@
-# smon: a virtual second monitor for umbriel
+# smon: a virtual second monitor for umbriel and Hyprland
 
-smon creates a virtual output on the umbriel compositor and streams it to:
+smon creates a virtual output on the umbriel or Hyprland compositor and streams it to:
 
 - **a browser** over WebRTC (any device on the LAN),
 - **an Android tablet over USB** (adb), no Wi-Fi needed,
@@ -17,7 +17,10 @@ smon cast miracast:<name|mac>
 smon cast airplay:<name|host:port>
 smon cast webos:<tv-ip>                   # first time: press Allow on the TV
 flags: -mode extend|mirror -w 1920 -h 1080 -fps 30 -kbps 8000 [-pos right|left|above|below] [-audio=false]
+       [-compositor umbriel|hyprland]     # default: detected (Hyprland when $HYPRLAND_INSTANCE_SIGNATURE is set)
 ```
+
+The sections below describe umbriel; see [Hyprland](#hyprland) for what differs there.
 
 **Placement:** SMON-1 follows your saved display layout (`~/.config/umbriel/outputs.toml`, written by the
 displays plugin), so move it with the displays plugin like any other monitor. `-pos` sets only an
@@ -61,6 +64,26 @@ the URL travels as plain HTTP. The webOS path is always view-only.
 
 Use the corner button for fullscreen; it appears for a few seconds after each touch.
 
+## Hyprland
+
+smon detects Hyprland from `$HYPRLAND_INSTANCE_SIGNATURE` and drives it with `hyprctl`. Runtime
+rules go through `hyprctl eval` (Lua) with a Lua config, which 0.57+ always uses, and through
+`hyprctl keyword` with a hyprlang config. Nothing is written to your config files, and these rules
+last only for the session. Every feature works the same; these parts differ:
+
+- **Virtual output:** `hyprctl output create headless SMON-1` (needs Hyprland 0.42 or newer). smon sets
+  a runtime monitor rule for its size and refresh rate, and removes the output on exit.
+- **Placement:** with no `-pos`, SMON-1 goes `auto-right`. `-pos right|left|above|below` places it
+  next to your other monitors. To keep it somewhere specific, add a rule to your config, for example
+  `monitor = SMON-1, 1920x1080@30, -1920x0, 1`. The `-w`/`-h`/`-fps` flags still apply when the
+  output is created.
+- **Share picker:** xdg-desktop-portal-hyprland shows hyprland-share-picker. Pick SMON-1 (extend)
+  or the screen to duplicate (mirror), and tick **Allow a restore token** so later runs skip the
+  picker.
+- **Touch input:** `-input` maps only smon's own touchscreen (`device[smon-touchscreen]:output`), so a
+  built-in touch panel keeps working on its own screen. If a hyprlang config rejects per-device rules,
+  smon falls back to `input:touchdevice:output` (every touchscreen) and restores it on exit.
+
 ## USB (Android)
 
 1. On the tablet, enable *Developer options → USB debugging*, plug it in and accept the prompt.
@@ -77,7 +100,7 @@ prints a URL for the tethering interface too.
 
 ## Requirements
 
-- umbriel, xdg-desktop-portal-umbriel, PipeWire
+- umbriel + xdg-desktop-portal-umbriel, **or** Hyprland 0.42+ + xdg-desktop-portal-hyprland; PipeWire
 - GStreamer 1.2x with `pipewiresrc`, `vah264enc` or `x264enc`, `h264parse`, `rtph264pay`,
   `mpegtsmux`, `rtpmp2tpay`, `avenc_aac`, `pulsesrc`, plus `opusenc` + `rtpopuspay` for browser/USB audio
   (gst-plugins-base, gst-plugins-good)

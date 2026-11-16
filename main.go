@@ -1,4 +1,4 @@
-// smon: create a virtual second monitor on umbriel and stream it over
+// smon: create a virtual second monitor on umbriel or Hyprland and stream it over
 // WebRTC (browser), USB (Android, via adb), Miracast or AirPlay.
 package main
 
@@ -32,10 +32,11 @@ func main() {
 	h := fs.Int("h", 1080, "height")
 	fps := fs.Int("fps", 30, "frame rate")
 	kbps := fs.Int("kbps", 8000, "video bitrate")
-	pos := fs.String("pos", "", "extend: initial placement right|left|above|below (default: saved display layout; rearranging in the displays plugin always wins)")
+	pos := fs.String("pos", "", "extend: initial placement right|left|above|below (default: umbriel's saved display layout, Hyprland auto-right; on umbriel rearranging in the displays plugin always wins)")
 	mode := fs.String("mode", "extend", "extend: new virtual monitor; mirror: duplicate an existing screen")
 	addr := fs.String("addr", ":8080", "web/webos: listen address (TCP and UDP); usb: only the port is used")
 	input := fs.Bool("input", false, "web/usb: viewer touches control the shared screen (anyone with the URL can)")
+	compFlag := fs.String("compositor", "", "umbriel|hyprland (default: detected from the session)")
 	audioOn := fs.Bool("audio", true, "add a \"Second Monitor (smon)\" sound output while streaming; what you play there reaches the receiver (not airplay)")
 	fs.Parse(os.Args[2:])
 
@@ -56,6 +57,10 @@ func main() {
 	if cmd == "cast" && *input {
 		log.Fatal("-input works only with web and usb")
 	}
+	comp, err := detectCompositor(*compFlag)
+	if err != nil {
+		log.Fatal(err)
+	}
 	if cmd == "usb" {
 		if err := adbDevice(); err != nil { // fail before the share picker
 			log.Fatal(err)
@@ -66,7 +71,7 @@ func main() {
 	if *audioOn && !strings.HasPrefix(fs.Arg(0), "airplay:") { // airplay mirroring carries no audio
 		audio = newAudio(!strings.HasPrefix(fs.Arg(0), "miracast:")) // miracast sends AAC, the rest Opus
 	}
-	d, err := NewDisplay(*w, *h, *fps, *pos, *mode)
+	d, err := NewDisplay(comp, *w, *h, *fps, *pos, *mode)
 	if err != nil {
 		log.Fatal(err)
 	}
