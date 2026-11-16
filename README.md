@@ -84,6 +84,37 @@ last only for the session. Every feature works the same; these parts differ:
   built-in touch panel keeps working on its own screen. If a hyprlang config rejects per-device rules,
   smon falls back to `input:touchdevice:output` (every touchscreen) and restores it on exit.
 
+### Dependencies on Hyprland
+
+Package names are for Arch (and CachyOS, Manjaro, …); other distributions use similar names.
+
+| Needed for | Packages |
+| --- | --- |
+| Compositor and screen capture | `hyprland` (0.42+, provides `hyprctl`), `xdg-desktop-portal-hyprland`, `pipewire`, `wireplumber` |
+| Video pipeline (every mode) | `gstreamer`, `gst-plugins-base`, `gst-plugins-good`, `gst-plugins-bad`, `gst-plugin-pipewire` |
+| H.264 encoder | `gst-plugin-va` (hardware, VA-API) or `gst-plugins-ugly` (`x264enc`, software fallback) |
+| Audio | `pipewire-pulse`, `libpulse` (`pactl`); `gst-libav` for Miracast AAC |
+| USB (`smon usb`) | `android-tools` (`adb`) |
+| Miracast | `networkmanager` (with a Wi-Fi P2P capable card), `dnsmasq` |
+| AirPlay | `avahi` (running `avahi-daemon`) |
+| Touch input (`-input`) | write access to `/dev/uinput` (see [Requirements](#requirements)) |
+| Building | `go`, `gcc` (cgo, for the AirPlay playfair code) |
+
+Everything at once:
+
+```
+sudo pacman -S --needed hyprland xdg-desktop-portal-hyprland pipewire wireplumber pipewire-pulse libpulse \
+  gstreamer gst-plugins-base gst-plugins-good gst-plugins-bad gst-plugin-pipewire gst-plugin-va \
+  gst-plugins-ugly gst-libav android-tools networkmanager dnsmasq avahi go gcc
+```
+
+Check that GStreamer finds the elements smon uses:
+
+```
+for e in pipewiresrc h264parse rtph264pay mpegtsmux opusenc pulsesrc; do gst-inspect-1.0 $e >/dev/null || echo "missing: $e"; done
+gst-inspect-1.0 vah264enc >/dev/null || gst-inspect-1.0 x264enc >/dev/null || echo "missing: an H.264 encoder"
+```
+
 ## USB (Android)
 
 1. On the tablet, enable *Developer options → USB debugging*, plug it in and accept the prompt.
