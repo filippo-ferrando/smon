@@ -1,10 +1,14 @@
 package gst
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
+	"maps"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -52,6 +56,11 @@ var (
 // and a Radeon 610M iGPU, the dGPU's VA encoder (the default "vah264enc") ran
 // 2560x1600 at 17 fps, the iGPU's at 59 fps and x264 ultrafast at ~95 fps. The
 // time per frame is also the latency the encoder adds. SMON_ENCODER overrides.
+//
+// Timing takes a second or two, so the winner is saved in the user cache
+// (see encoderCache) per output size and set of encoders: new hardware or
+// plugins mean a new set, and a new test. ForgetEncoder drops a saved winner
+// that stopped working.
 func pickEncoder(w, h, fps, kbps int) string {
 	if e := os.Getenv("SMON_ENCODER"); e != "" {
 		return e
@@ -61,8 +70,16 @@ func pickEncoder(w, h, fps, kbps int) string {
 	if e, ok := encPicked[[2]int{w, h}]; ok {
 		return e
 	}
+	cands := encoderCandidates()
+	key := cacheKey(w, h, cands)
+	cache := loadEncoderCache()
+	if e, ok := cache[key]; ok && slices.Contains(cands, e) {
+		log.Printf("using encoder %s (saved in %s; set SMON_ENCODER to override)", e, encoderCache())
+		encPicked[[2]int{w, h}] = e
+		return e
+	}
 	best, bestT := "x264enc", time.Duration(1<<62)
-	for _, e := range encoderCandidates() {
+	for _, e := range cands {
 		t, err := benchEncoder(e, w, h, fps, kbps)
 		if err != nil {
 			log.Printf("encoder %s unusable: %v", e, err)
@@ -75,7 +92,70 @@ func pickEncoder(w, h, fps, kbps int) string {
 	}
 	log.Printf("using encoder %s (set SMON_ENCODER to override)", best)
 	encPicked[[2]int{w, h}] = best
+	if bestT < 1<<62 { // a real winner, not the fallback
+		cache[key] = best
+		saveEncoderCache(cache)
+	}
 	return best
+}
+
+// ForgetEncoder drops the encoder picked for w x h, in memory and on disk,
+// so the next pick tests them all again. Call it when a pipeline using it
+// fails.
+func ForgetEncoder(w, h int) {
+	if os.Getenv("SMON_ENCODER") != "" { // not a pick: nothing saved to forget
+		return
+	}
+	encMu.Lock()
+	defer encMu.Unlock()
+	delete(encPicked, [2]int{w, h})
+	cache := loadEncoderCache()
+	prefix := fmt.Sprintf("%dx%d ", w, h)
+	n := len(cache)
+	maps.DeleteFunc(cache, func(k, _ string) bool { return strings.HasPrefix(k, prefix) })
+	if len(cache) != n {
+		saveEncoderCache(cache)
+	}
+}
+
+// encoderCache is the file holding the encoders picked so far.
+func encoderCache() string {
+	dir, err := os.UserCacheDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(dir, "smon", "encoder.json")
+}
+
+func cacheKey(w, h int, cands []string) string {
+	return fmt.Sprintf("%dx%d %s", w, h, strings.Join(cands, ","))
+}
+
+// loadEncoderCache returns the saved picks; empty when there are none.
+func loadEncoderCache() map[string]string {
+	m := map[string]string{}
+	if f := encoderCache(); f != "" {
+		if b, err := os.ReadFile(f); err == nil {
+			_ = json.Unmarshal(b, &m)
+		}
+	}
+	return m
+}
+
+// saveEncoderCache writes m atomically. It is only a cache: errors are ignored.
+func saveEncoderCache(m map[string]string) {
+	f := encoderCache()
+	if f == "" {
+		return
+	}
+	b, err := json.MarshalIndent(m, "", "  ")
+	if err != nil || os.MkdirAll(filepath.Dir(f), 0o755) != nil {
+		return
+	}
+	tmp := f + ".tmp"
+	if os.WriteFile(tmp, b, 0o644) == nil {
+		_ = os.Rename(tmp, f)
+	}
 }
 
 // HasElement reports whether GStreamer has the element (or plugin) named el.

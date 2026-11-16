@@ -2,6 +2,7 @@ package web
 
 import (
 	"sync"
+	"sync/atomic"
 )
 
 // auHub fans access units out to WebSocket viewers. A viewer that falls
@@ -10,6 +11,7 @@ import (
 type auHub struct {
 	mu      sync.Mutex
 	subs    map[*auSub]struct{}
+	n       atomic.Int32 // len(subs), read without mu on every packet
 	needKey func()
 }
 
@@ -27,6 +29,7 @@ func (h *auHub) subscribe() *auSub {
 		h.subs = map[*auSub]struct{}{}
 	}
 	h.subs[s] = struct{}{}
+	h.n.Store(int32(len(h.subs)))
 	if h.needKey != nil {
 		h.needKey()
 	}
@@ -37,6 +40,7 @@ func (h *auHub) unsubscribe(s *auSub) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	delete(h.subs, s)
+	h.n.Store(int32(len(h.subs)))
 }
 
 // WebSocket message flags (first byte).
@@ -78,8 +82,17 @@ func (h *auHub) publishAudio(msg []byte) {
 	}
 }
 
-func (h *auHub) empty() bool {
+// lost makes every viewer skip to the next keyframe, and asks for it: the
+// access unit they were due went missing.
+func (h *auHub) lost() {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	return len(h.subs) == 0
+	for s := range h.subs {
+		s.waitKey = true
+	}
+	if len(h.subs) > 0 && h.needKey != nil {
+		h.needKey()
+	}
 }
+
+func (h *auHub) empty() bool { return h.n.Load() == 0 }

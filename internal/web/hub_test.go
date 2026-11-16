@@ -18,3 +18,25 @@ func TestHubAudioSeparateFromVideo(t *testing.T) {
 		t.Fatalf("video queue %d, audio queue %d/%d", len(s.c), len(s.a), cap(s.a))
 	}
 }
+
+// After a lost access unit viewers skip deltas until a keyframe, and one is asked for.
+func TestHubLost(t *testing.T) {
+	asked := 0
+	h := auHub{needKey: func() { asked++ }}
+	s := h.subscribe()
+	h.publish([]byte{wsKey, 1}, true)
+	asked = 0
+	h.lost()
+	h.publish([]byte{0, 2}, false)
+	if len(s.c) != 1 || asked != 1 {
+		t.Fatalf("queue %d, keyframes asked %d", len(s.c), asked)
+	}
+	h.publish([]byte{wsKey, 3}, true)
+	if len(s.c) != 2 || h.empty() {
+		t.Fatalf("keyframe not delivered")
+	}
+	h.unsubscribe(s)
+	if !h.empty() {
+		t.Fatal("hub not empty after unsubscribe")
+	}
+}

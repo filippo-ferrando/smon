@@ -48,7 +48,7 @@ func newEncodeHarness(t *testing.T, enc string, kbps, gop int) *encodeHarness {
 			}
 			e.mu.Lock()
 			e.bytes += n
-			if au := asm.Push(buf[:n]); au != nil && h264.IsKeyframe(au) {
+			if _, key := asm.Push(buf[:n]); key {
 				e.keys++
 			}
 			e.mu.Unlock()

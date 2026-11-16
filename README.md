@@ -194,6 +194,9 @@ connection, enable *Settings → General → Devices → External Devices → TV
 - At startup smon times every H.264 encoder (each GPU's VA-API encoder, and x264) at the output size and
   uses the fastest, since time per frame is latency the encoder adds and older GPUs can be slower than
   x264. The log prints the timings; `SMON_ENCODER=x264enc` (or e.g. `varenderD129h264enc`) skips the test.
+  The winner is saved in `~/.cache/smon/encoder.json` per output size, so later runs start without the
+  test. It runs again when the set of encoders changes (new GPU or plugins), or when the capture
+  pipeline fails within its first 10 s. Delete the file to force a new test, for example after a driver update.
 - Browser viewers get a keyframe on demand: when they connect, when they report loss (PLI/FIR), and when
   a USB viewer falls behind. At most one every 500 ms; the periodic one comes every 5 s. AirPlay and
   Miracast receivers can't ask, so they keep a 1-second GOP.

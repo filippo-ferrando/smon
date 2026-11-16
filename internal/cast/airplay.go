@@ -325,7 +325,7 @@ func mirror(udp *net.UDPConn, w io.Writer, stream cipher.Stream, width, height i
 		if err != nil {
 			return err
 		}
-		au := asm.Push(buf[:n])
+		au, _ := asm.Push(buf[:n])
 		if au == nil {
 			continue
 		}

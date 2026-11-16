@@ -278,9 +278,10 @@ func forwardAudio(udp *net.UDPConn, track *webrtc.TrackLocalStaticRTP, hub *auHu
 }
 
 // forwardVideo copies H.264 RTP from gstreamer to the WebRTC track, and
-// whole access units to the WebSocket viewers, until udp closes.
+// whole access units to the WebSocket viewers, until udp closes. With no
+// WebSocket viewer it only forwards packets: no access units to assemble.
 func forwardVideo(udp *net.UDPConn, track *webrtc.TrackLocalStaticRTP, hub *auHub) {
-	var asm h264.Assembler
+	asm := h264.Assembler{Head: 1} // room for the flags byte
 	buf := make([]byte, 1500)
 	for {
 		n, err := udp.Read(buf)
@@ -288,16 +289,22 @@ func forwardVideo(udp *net.UDPConn, track *webrtc.TrackLocalStaticRTP, hub *auHu
 			return
 		}
 		_, _ = track.Write(buf[:n])
-		au := asm.Push(buf[:n])
-		if au == nil || hub.empty() {
+		if hub.empty() {
+			asm.Skip(buf[:n]) // stays in step, so a joining viewer's IDR comes out whole
 			continue
 		}
-		key := h264.IsKeyframe(au)
-		flags := byte(0)
-		if key {
-			flags = wsKey
+		dropped := asm.Dropped
+		au, key := asm.Push(buf[:n])
+		if asm.Dropped != dropped { // a lost packet: the viewers' next frame must be an IDR
+			hub.lost()
 		}
-		hub.publish(append([]byte{flags}, au...), key)
+		if au == nil {
+			continue
+		}
+		if key {
+			au[0] = wsKey
+		}
+		hub.publish(au, key)
 	}
 }
 

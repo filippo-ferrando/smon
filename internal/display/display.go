@@ -9,6 +9,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"time"
 
 	"smon/internal/compositor"
 	"smon/internal/config"
@@ -152,6 +153,10 @@ func (d *Display) checkSource(mode string, props map[string]dbus.Variant) error 
 	return nil
 }
 
+// encoderTrial is how long a pipeline must run before its encoder counts as
+// working: an earlier failure makes the next run test the encoders again.
+const encoderTrial = 10 * time.Second
+
 // Pipeline starts capturing the virtual output, scaling it to w x h at fps,
 // encoding H.264 constrained-baseline with an IDR every gop frames, then
 // running tail. It runs in this process so callers can force keyframes and
@@ -170,10 +175,17 @@ func (d *Display) Pipeline(kbps, w, h, fps, gop int, tail string) (*gst.Pipeline
 		fd, d.node, 1000/d.FPS, gst.Encoder(w, h, fps, kbps, gop), tail)
 	g, err := gst.Start(p)
 	if err != nil {
+		gst.ForgetEncoder(w, h) // maybe a saved encoder that no longer works
 		unix.Close(fd)
 		return nil, err
 	}
-	go func() { g.Wait(); unix.Close(fd) }()
+	started := time.Now()
+	go func() {
+		if err := g.Wait(); err != nil && time.Since(started) < encoderTrial {
+			gst.ForgetEncoder(w, h)
+		}
+		unix.Close(fd)
+	}()
 	d.AtClose(g.Stop) // Ctrl-C: stop capturing before the output and portal go away
 	return g, nil
 }
