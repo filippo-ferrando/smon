@@ -72,7 +72,7 @@ function codecFor(au) { // avc1.PPCCLL from the SPS
 function startWS() {
   v.style.display = 'none'; c.style.display = 'block'; surface = c;
   const ctx = c.getContext('2d', { alpha: false, desynchronized: true }); // desynchronized: skip a compositor frame where supported
-  const ws = new WebSocket(`ws://${location.host}/ws${location.search}`);
+  const ws = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws${location.search}`);
   ws.binaryType = 'arraybuffer';
   let dec = null, ts = 0, waitKey = true;
   ws.onopen = () => { if (INPUT) send = m => ws.readyState === 1 && ws.send(m); };

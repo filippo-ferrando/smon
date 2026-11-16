@@ -56,11 +56,12 @@ func main() {
 			log.Fatal(err)
 		}
 	}
+	opts := web.Options{Touch: tch, Audio: snd, TLS: o.tls, QR: o.qr, NewToken: o.newToken}
 	switch o.cmd {
 	case "web":
-		err = web.Serve(d, o.addr, o.kbps, web.Options{Touch: tch, Audio: snd})
+		err = web.Serve(d, o.addr, o.kbps, opts)
 	case "usb":
-		err = web.ServeUSB(d, o.addr, o.kbps, tch, snd)
+		err = web.ServeUSB(d, o.addr, o.kbps, opts)
 	default:
 		err = cast.Cast(d, o.target, o.kbps, o.addr, snd)
 	}

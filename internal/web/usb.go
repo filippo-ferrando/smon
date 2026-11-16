@@ -9,9 +9,7 @@ import (
 	"strconv"
 	"strings"
 
-	"smon/internal/audio"
 	"smon/internal/display"
-	"smon/internal/touch"
 )
 
 // ADBDevice checks that exactly one authorized Android device is attached
@@ -39,7 +37,8 @@ func ADBDevice() error {
 // go through `adb reverse` (TCP only), so the tablet opens http://localhost
 // and the page decodes a WebSocket stream with WebCodecs. smon listens only
 // on loopback, so nothing is exposed on the LAN.
-func ServeUSB(d *display.Display, addr string, kbps int, tch *touch.Touch, snd *audio.Audio) error {
+// TLS is never used: the tablet's localhost is already a secure context.
+func ServeUSB(d *display.Display, addr string, kbps int, opts Options) error {
 	if err := ADBDevice(); err != nil {
 		return err
 	}
@@ -47,9 +46,8 @@ func ServeUSB(d *display.Display, addr string, kbps int, tch *touch.Touch, snd *
 	if err != nil {
 		return fmt.Errorf("bad -addr %q: %w", addr, err)
 	}
-	opts := Options{Touch: tch, Audio: snd, Ready: func(port int, token string) error {
-		return openOnTablet(d, port, token)
-	}}
+	opts.TLS, opts.QR = false, false
+	opts.Ready = func(port int, token string) error { return openOnTablet(d, port, token) }
 	return Serve(d, net.JoinHostPort("127.0.0.1", port), kbps, opts)
 }
 

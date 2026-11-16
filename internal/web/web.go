@@ -4,19 +4,22 @@ package web
 
 import (
 	"bytes"
-	"crypto/rand"
 	"crypto/subtle"
+	"crypto/tls"
 	_ "embed"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log"
 	"net"
 	"net/http"
+	"os"
+	"path/filepath"
+	"strconv"
 	"sync/atomic"
 	"time"
 
 	"smon/internal/audio"
+	"smon/internal/config"
 	"smon/internal/display"
 	"smon/internal/h264"
 	"smon/internal/touch"
@@ -46,6 +49,10 @@ type Options struct {
 	Touch *touch.Touch                       // viewer touches drive this; nil keeps viewers view-only
 	Audio *audio.Audio                       // sound sent to the smon output device; nil: video only
 	Ready func(port int, token string) error // runs once the server is up
+
+	TLS      bool // serve HTTPS with smon's own certificate (see tls.go)
+	QR       bool // print the viewer URL as a QR code too, on a terminal
+	NewToken bool // replace the saved access token with a new one
 }
 
 // inputMsg is one viewer pointer event: t is d(own), m(ove) or u(p); x, y are
@@ -81,8 +88,12 @@ func Serve(d *display.Display, addr string, kbps int, opts Options) error {
 	}
 	defer gst.Stop()
 
+	token, err := loadToken(config.Dir(), opts.NewToken)
+	if err != nil {
+		return fmt.Errorf("access token: %w", err)
+	}
 	s := &webServer{
-		token: newToken(),
+		token: token,
 		touch: opts.Touch,
 		hub:   &auHub{needKey: gst.Keyframe},
 		peer:  peerHooks{keyframe: gst.Keyframe},
@@ -111,6 +122,21 @@ func Serve(d *display.Display, addr string, kbps int, opts Options) error {
 	if err != nil {
 		return err
 	}
+	ips := lanIPs()
+	if h, _, _ := net.SplitHostPort(addr); h != "" {
+		ips = []string{h}
+	}
+	scheme := "http"
+	if opts.TLS {
+		c, err := loadCerts(filepath.Join(config.Dir(), "tls"), certHosts(ips))
+		if err != nil {
+			_ = ln.Close()
+			return fmt.Errorf("tls: %w", err)
+		}
+		s.caDER = c.caDER
+		ln = tls.NewListener(ln, &tls.Config{Certificates: []tls.Certificate{c.leaf}, MinVersion: tls.VersionTLS12})
+		scheme = "https"
+	}
 	var se webrtc.SettingEngine
 	se.SetICEUDPMux(webrtc.NewICEUDPMux(nil, ice))
 	if _, s.newPC, err = webAPI(se, s.peer.abr != nil); err != nil {
@@ -118,13 +144,7 @@ func Serve(d *display.Display, addr string, kbps int, opts Options) error {
 	}
 
 	port := ln.Addr().(*net.TCPAddr).Port
-	ips := lanIPs()
-	if h, _, _ := net.SplitHostPort(addr); h != "" {
-		ips = []string{h}
-	}
-	for _, ip := range ips {
-		fmt.Printf("open http://%s:%d/?t=%s\n", ip, port, s.token)
-	}
+	printURLs(scheme, ips, port, s.token, opts)
 
 	errc := make(chan error, 3)
 	go func() { errc <- http.Serve(ln, s.routes()) }()
@@ -142,6 +162,7 @@ func Serve(d *display.Display, addr string, kbps int, opts Options) error {
 // webServer holds what the HTTP handlers share for one Serve run.
 type webServer struct {
 	token  string
+	caDER  []byte // smon's CA certificate, served at /ca.crt; nil without TLS
 	page   []byte
 	tracks []webrtc.TrackLocal
 	touch  *touch.Touch
@@ -155,6 +176,9 @@ func (s *webServer) routes() *http.ServeMux {
 	mux.HandleFunc("GET /{$}", s.authed(s.handleIndex))
 	mux.HandleFunc("POST /offer", s.authed(s.handleOffer))
 	mux.HandleFunc("GET /ws", s.authed(s.handleWS))
+	if s.caDER != nil {
+		mux.HandleFunc("GET /ca.crt", s.handleCA) // public: a device installs it before it trusts us
+	}
 	return mux
 }
 
@@ -166,6 +190,32 @@ func (s *webServer) authed(h http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 		h(w, r)
+	}
+}
+
+// handleCA serves smon's CA certificate in the DER form Android and iOS
+// install from a download.
+func (s *webServer) handleCA(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Content-Type", "application/x-x509-ca-cert")
+	w.Header().Set("Content-Disposition", `attachment; filename="smon-ca.crt"`)
+	_, _ = w.Write(s.caDER)
+}
+
+// printURLs prints the viewer URL for each address, the first one also as a
+// QR code when someone is watching the terminal.
+func printURLs(scheme string, ips []string, port int, token string, opts Options) {
+	for i, ip := range ips {
+		url := fmt.Sprintf("%s://%s/?t=%s", scheme, net.JoinHostPort(ip, strconv.Itoa(port)), token)
+		fmt.Printf("open %s\n", url)
+		if i == 0 && opts.QR && isTerminal(os.Stdout) {
+			if q, err := renderQR(url); err == nil {
+				fmt.Print(q)
+			}
+		}
+	}
+	if scheme == "https" && len(ips) > 0 {
+		fmt.Printf("the browser warns about the certificate the first time; to trust it for good (and install the viewer as an app), open https://%s/ca.crt on the device and install it\n",
+			net.JoinHostPort(ips[0], strconv.Itoa(port)))
 	}
 }
 
@@ -306,13 +356,6 @@ func forwardVideo(udp *net.UDPConn, track *webrtc.TrackLocalStaticRTP, hub *auHu
 		}
 		hub.publish(au, key)
 	}
-}
-
-// newToken returns a random access token for the viewer URL.
-func newToken() string {
-	b := make([]byte, 16)
-	_, _ = rand.Read(b) // never fails on Linux
-	return hex.EncodeToString(b)
 }
 
 // renderPage turns on the page's touch and sound support as configured.

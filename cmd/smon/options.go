@@ -27,6 +27,9 @@ type options struct {
 	compositor string
 	input      bool
 	audio      bool
+	tls        bool
+	qr         bool
+	newToken   bool
 }
 
 // parseArgs parses args (os.Args without the program name). It exits with
@@ -49,6 +52,9 @@ func parseArgs(args []string) options {
 	fs.BoolVar(&o.input, "input", false, "web/usb: viewer touches control the shared screen (anyone with the URL can)")
 	fs.StringVar(&o.compositor, "compositor", "", "umbriel|hyprland|sway|kde (default: detected from the session)")
 	fs.BoolVar(&o.audio, "audio", true, "add a \"Second Monitor (smon)\" sound output while streaming; what you play there reaches the receiver (not airplay)")
+	fs.BoolVar(&o.tls, "tls", true, "web: serve the viewer over HTTPS with smon's own certificate (needed for app install and keeping the screen awake)")
+	fs.BoolVar(&o.qr, "qr", true, "web: also print the viewer URL as a QR code")
+	fs.BoolVar(&o.newToken, "new-token", false, "web/usb: replace the saved access token, so old URLs stop working")
 	_ = fs.Parse(args[1:]) // ExitOnError: never returns an error
 
 	switch o.cmd {
