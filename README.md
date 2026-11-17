@@ -2,24 +2,35 @@
   <img src="docs/assets/header.jpg" alt="smon" width="800">
 </p>
 
-**A wireless-first second monitor for Wayland compositors.**
+<p align="center">
+  <strong>A wireless-first second monitor for Wayland compositors.</strong><br>
+  Turn the tablet, phone, laptop or TV next to you into a real extra display.
+</p>
 
-smon adds a virtual monitor to your Wayland desktop and streams it to the screen you
-already have nearby: a tablet, a phone, a laptop, a TV. Open a URL in a browser, or cast to
-a Miracast, AirPlay or webOS receiver, and that device becomes a real extra display.
-You can drag windows onto it, play sound on it, and with `-input`, control it by touch and pen.
+<p align="center">
+  smon adds a virtual monitor to your Wayland desktop and streams it to the screen you
+  already have nearby. Open a URL in a browser, or cast to a Miracast, AirPlay or webOS
+  receiver, and that device joins your desktop: drag windows onto it, play sound
+  on it, and with <code>-input</code>, control it by touch and pen.
+</p>
 
-[![License: GPL-3.0-or-later](https://img.shields.io/badge/license-GPL--3.0--or--later-blue.svg)](LICENSE)
-[![Go](https://img.shields.io/badge/go-1.27-00ADD8.svg?logo=go&logoColor=white)](go.mod)
-![Wayland](https://img.shields.io/badge/wayland-umbriel%20%7C%20Hyprland%20%7C%20Sway%20%7C%20KDE%20%7C%20GNOME-informational)
+<p align="center">
+  <a href="https://git.fferrando.cc/rdfilippo/smon/actions?workflow=ci.yml"><img alt="CI" src="https://git.fferrando.cc/rdfilippo/smon/actions/workflows/ci.yml/badge.svg?label=ci"></a>
+  <a href="https://git.fferrando.cc/rdfilippo/smon/releases"><img alt="Release" src="https://img.shields.io/gitea/v/release/rdfilippo/smon?gitea_url=https%3A%2F%2Fgit.fferrando.cc&label=release&color=2ea043"></a>
+  <a href="go.mod"><img alt="Go" src="https://img.shields.io/badge/go-1.27-00ADD8?logo=go&logoColor=white"></a>
+  <img alt="Wayland" src="https://img.shields.io/badge/wayland-umbriel%20%7C%20Hyprland%20%7C%20Sway%20%7C%20KDE%20%7C%20GNOME-1d2840">
+  <a href="LICENSE"><img alt="License: GPL-3.0-or-later" src="https://img.shields.io/badge/license-GPL--3.0--or--later-blue"></a>
+</p>
 
-[Features](#features) ·
-[Supported platforms](#supported-platforms) ·
-[Quick start](#quick-start) ·
-[Usage](#usage) ·
-[Documentation](#documentation) ·
-[Contributing](#contributing) ·
-[License](#license)
+<p align="center">
+  <a href="#features">Features</a> ·
+  <a href="#supported-platforms">Supported platforms</a> ·
+  <a href="#quick-start">Quick start</a> ·
+  <a href="#usage">Usage</a> ·
+  <a href="#documentation">Documentation</a> ·
+  <a href="#contributing">Contributing</a> ·
+  <a href="#license">License</a>
+</p>
 
 ---
 
