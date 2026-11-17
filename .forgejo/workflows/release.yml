@@ -44,8 +44,9 @@ jobs:
           cp packaging/arch/60-smon-uinput.rules /tmp/pkgroot/
           chown -R builder:builder /tmp/pkgroot
 
-          # SMON_REPO points the PKGBUILD's git source at this checkout, at the pushed tag.
-          git fetch --tags --force
+          # SMON_REPO points the PKGBUILD's git source at this checkout, at the pushed tag
+          # (fetch-depth: 0 already brought the tags; git as root here would hit "dubious
+          # ownership", since the checkout now belongs to builder).
           su builder -c "cd /tmp/pkgroot && SMON_REPO='file://$GITHUB_WORKSPACE#tag=$GITHUB_REF_NAME' makepkg --noconfirm --nodeps"
 
       - name: Collect artifacts
