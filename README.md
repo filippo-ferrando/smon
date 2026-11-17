@@ -1,4 +1,6 @@
-# smon
+<p align="center">
+  <img src="docs/assets/header.jpg" alt="smon" width="800">
+</p>
 
 **A wireless-first second monitor for Wayland compositors.**
 
