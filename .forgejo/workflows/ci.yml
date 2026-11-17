@@ -1,9 +1,29 @@
 name: CI
 
+# Only run when something that affects the build or tests changes; docs, README,
+# CHANGELOG, packaging and release scripts don't. internal/** is listed whole because
+# it also holds embedded assets (index.html, sw.js) and the cgo sources. Keep both
+# lists in sync.
 on:
   push:
     branches: ["main"]
+    paths:
+      - "cmd/**"
+      - "internal/**"
+      - "**.go"
+      - "go.mod"
+      - "go.sum"
+      - "Makefile"
+      - ".forgejo/workflows/ci.yml"
   pull_request:
+    paths:
+      - "cmd/**"
+      - "internal/**"
+      - "**.go"
+      - "go.mod"
+      - "go.sum"
+      - "Makefile"
+      - ".forgejo/workflows/ci.yml"
 
 permissions:
   contents: read
