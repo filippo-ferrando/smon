@@ -107,16 +107,22 @@ func (umbriel) UnmapInput(dev touch.Device) {
 func unsetPos(name string) { _ = exec.Command("umbriel", "config", "unset", posKey(name)).Run() }
 
 // layout leaves SMON-1 to the saved display layout (outputs.toml, owned by
-// the displays plugin; umbriel itself keeps outputs from overlapping), unless
-// pos asks smon to place it with a runtime override.
+// the displays plugin), unless pos asks smon to place it with a runtime
+// override. umbriel lets outputs overlap, so a saved spot on top of another
+// screen (which would just show the same area) is overridden to the right.
 func (u umbriel) layout(name, pos string, w, h int) error {
 	if pos == "" {
 		unsetPos(name)
-		return nil
 	}
 	outs, err := u.Outputs()
 	if err != nil {
 		return err
+	}
+	if pos == "" {
+		if !overlaps(outs, name) {
+			return nil
+		}
+		pos = "right"
 	}
 	x, y, ok, err := placeXY(outs, name, pos, w, h)
 	if err != nil || !ok {

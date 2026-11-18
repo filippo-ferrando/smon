@@ -52,6 +52,20 @@ func TestPlaceXY(t *testing.T) {
 	}
 }
 
+func TestOverlaps(t *testing.T) {
+	out := func(name string, x, w int) Output {
+		o := Output{Name: name, Enabled: true}
+		o.Position.X, o.Logical.Width, o.Logical.Height = x, w, 1080
+		return o
+	}
+	if !overlaps([]Output{out("eDP-1", 0, 1920), out(OutputName, 0, 1080)}, OutputName) {
+		t.Error("both at 0,0: want overlap")
+	}
+	if overlaps([]Output{out("eDP-1", 0, 1920), out(OutputName, 1920, 1080)}, OutputName) {
+		t.Error("side by side: want no overlap")
+	}
+}
+
 func TestDetectCompositor(t *testing.T) {
 	t.Setenv("HYPRLAND_INSTANCE_SIGNATURE", "x")
 	if c, err := Detect(""); err != nil || c.Name() != "hyprland" {

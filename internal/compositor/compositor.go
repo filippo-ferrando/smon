@@ -148,6 +148,23 @@ func Detect(flag string) (Compositor, error) {
 
 // placeXY returns where a w x h output goes when placed pos (right|left|above|below)
 // of the bounding box of the other enabled outputs. ok is false when there are none.
+// overlaps reports whether output name shares any area with another enabled output.
+func overlaps(outs []Output, name string) bool {
+	for _, a := range outs {
+		if a.Name != name {
+			continue
+		}
+		for _, b := range outs {
+			if b.Name != name && b.Enabled &&
+				a.Position.X < b.Position.X+b.Logical.Width && b.Position.X < a.Position.X+a.Logical.Width &&
+				a.Position.Y < b.Position.Y+b.Logical.Height && b.Position.Y < a.Position.Y+a.Logical.Height {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func placeXY(outs []Output, skip, pos string, w, h int) (x, y int, ok bool, err error) {
 	minX, minY, maxX, maxY := 1<<30, 1<<30, -1<<30, -1<<30
 	for _, o := range outs {
