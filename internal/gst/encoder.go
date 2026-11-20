@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
 	"maps"
 	"os"
 	"os/exec"
@@ -13,6 +12,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"smon/internal/logx"
 )
 
 // Encoder returns the elements from raw frames (any size, any RGB format) to
@@ -125,7 +126,7 @@ func pickEncoder(c *Codec, w, h, fps, kbps int) string {
 	key := cacheKey(c, w, h, cands)
 	cache := loadEncoderCache()
 	if e, ok := cache[key]; ok && slices.Contains(cands, e) {
-		log.Printf("using encoder %s (saved in %s; set SMON_ENCODER to override)", e, encoderCache())
+		logx.Infof("encoder", "using %s (saved in %s; set SMON_ENCODER to override)", e, encoderCache())
 		encPicked[keyFor(c, w, h)] = e
 		return e
 	}
@@ -133,15 +134,15 @@ func pickEncoder(c *Codec, w, h, fps, kbps int) string {
 	for _, e := range cands {
 		t, err := benchEncoder(e, w, h, fps, kbps)
 		if err != nil {
-			log.Printf("encoder %s unusable: %v", e, err)
+			logx.Debugf("encoder", "%s unusable: %v", e, err)
 			continue
 		}
-		log.Printf("encoder %s: %.1f ms/frame at %dx%d", e, float64(t.Microseconds())/1000, w, h)
+		logx.Debugf("encoder", "%s: %.1f ms/frame at %dx%d", e, float64(t.Microseconds())/1000, w, h)
 		if t < bestT {
 			best, bestT = e, t
 		}
 	}
-	log.Printf("using encoder %s (set SMON_ENCODER to override)", best)
+	logx.Infof("encoder", "using %s (set SMON_ENCODER to override)", best)
 	encPicked[keyFor(c, w, h)] = best
 	if bestT < 1<<62 { // a real winner, not the fallback
 		cache[key] = best

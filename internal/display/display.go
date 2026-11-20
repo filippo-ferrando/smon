@@ -6,13 +6,14 @@ package display
 import (
 	"errors"
 	"fmt"
-	"log"
 	"net"
 	"os"
 	"path/filepath"
 	"slices"
 	"sync"
 	"time"
+
+	"smon/internal/logx"
 
 	"smon/internal/compositor"
 	"smon/internal/config"
@@ -60,15 +61,15 @@ func New(comp compositor.Compositor, spec compositor.OutputSpec, mode string, n 
 		spec.Name = compositor.MonitorName(n)
 	}
 	d := &Display{N: n, W: spec.W, H: spec.H, FPS: spec.FPS, comp: comp, virtual: mode == "extend", spec: spec}
-	hint := "smon: in the share picker choose the screen to duplicate"
+	hint := "in the share picker choose the screen to duplicate"
 	switch mode {
 	case "extend":
 		if _, ok := comp.(compositor.PortalOutput); ok {
 			d.portalOut = true
 			d.before, _ = comp.Outputs() // best effort: names the output when the portal does not
-			hint = "smon: in the share dialog allow the new virtual display (on Plasma 6.8+ choose its resolution there)"
+			hint = "in the share dialog allow the new virtual display (on Plasma 6.8+ choose its resolution there)"
 			if comp.Name() == "gnome" {
-				hint = "smon: in the share dialog choose the virtual monitor"
+				hint = "in the share dialog choose the virtual monitor"
 			}
 			break
 		}
@@ -80,7 +81,7 @@ func New(comp compositor.Compositor, spec compositor.OutputSpec, mode string, n 
 		track(comp, name)
 		d.done = make(chan struct{})
 		go comp.WatchLayout(name, d.done)
-		hint = "smon: in the share picker choose " + name
+		hint = "in the share picker choose " + name
 	case "mirror":
 	default:
 		return nil, fmt.Errorf("bad -mode %q (extend|mirror)", mode)
@@ -92,7 +93,7 @@ func New(comp compositor.Compositor, spec compositor.OutputSpec, mode string, n 
 		case "sway":
 			hint += " (xdg-desktop-portal-wlr remembers the choice only with XDPW_PERSIST_MODE set, and never for extend, whose output name changes every run)"
 		}
-		fmt.Fprintln(os.Stderr, hint)
+		logx.Hintf("display", "%s", hint)
 	}
 	if err := d.screencast(mode); err != nil {
 		d.Close()
@@ -191,9 +192,9 @@ func (d *Display) inputLater() (*touch.Touch, *touch.Pen, error) {
 	if p, err := touch.NewPen(touch.PenDevice.For(d.N), d.W, d.H); err == nil {
 		d.pen = p
 	} else {
-		log.Printf("pen input off: %v", err)
+		logx.Warnf("pen", "pen input off: %v", err)
 	}
-	fmt.Fprintln(os.Stderr, "smon: touch input enabled once the virtual monitor appears")
+	logx.Infof("touch", "touch input enabled once the virtual monitor appears")
 	return d.touch, d.pen, nil
 }
 
@@ -216,7 +217,7 @@ func (d *Display) settle() {
 			}
 		}
 		if time.Now().After(deadline) {
-			fmt.Fprintln(os.Stderr, "smon: the virtual monitor did not show up in the display layout: -pos, -scale and -input will not work")
+			logx.Warnf("display", "the virtual monitor did not show up in the display layout: -pos, -scale and -input will not work")
 			return
 		}
 		time.Sleep(250 * time.Millisecond)
@@ -224,22 +225,22 @@ func (d *Display) settle() {
 	d.outMu.Lock()
 	d.want, d.output = name, name
 	d.outMu.Unlock()
-	fmt.Fprintf(os.Stderr, "smon: streaming %s (%dx%d)\n", name, d.W, d.H)
+	logx.OKf("display", "streaming %s (%dx%d)", name, d.W, d.H)
 	if p, ok := d.comp.(compositor.PortalOutput); ok {
 		spec := d.spec
 		spec.W, spec.H = d.W, d.H
 		if err := p.PlaceOutput(name, spec); err != nil {
-			fmt.Fprintf(os.Stderr, "smon: placing %s: %v\n", name, err)
+			logx.Warnf("display", "placing %s: %v", name, err)
 		}
 	}
 	if d.touch != nil {
 		if err := d.comp.MapInput(touch.TouchDevice.For(d.N), name); err != nil {
-			log.Printf("touch input: %v", err)
+			logx.Warnf("touch", "touch input: %v", err)
 		}
 	}
 	if d.pen != nil {
 		if err := d.comp.MapInput(touch.PenDevice.For(d.N), name); err != nil {
-			log.Printf("pen input: %v", err)
+			logx.Warnf("pen", "pen input: %v", err)
 		}
 	}
 }
@@ -285,7 +286,7 @@ func (d *Display) EnableTouch() (*touch.Touch, *touch.Pen, error) {
 		return nil, nil, err
 	}
 	d.touch = t
-	fmt.Fprintf(os.Stderr, "smon: touch input enabled on %s\n", d.output)
+	logx.OKf("touch", "touch input enabled on %s", d.output)
 
 	p, err := touch.NewPen(touch.PenDevice.For(d.N), d.W, d.H)
 	if err == nil {
@@ -295,7 +296,7 @@ func (d *Display) EnableTouch() (*touch.Touch, *touch.Pen, error) {
 		}
 	}
 	if err != nil {
-		log.Printf("pen input off: %v", err)
+		logx.Warnf("pen", "pen input off: %v", err)
 		return t, nil, nil
 	}
 	d.pen = p
@@ -335,13 +336,13 @@ func (d *Display) checkSource(mode string, props map[string]dbus.Variant) error 
 	if mode == "mirror" || d.portalOut {
 		if size, ok := propPair(props, "size"); ok && size[0] > 0 && size[1] > 0 && !d.capsSized() {
 			if d.portalOut && (size[0] != d.W || size[1] != d.H) {
-				fmt.Fprintf(os.Stderr, "smon: the virtual display is %dx%d, not the -w/-h %dx%d\n", size[0], size[1], d.W, d.H)
+				logx.Warnf("display", "the virtual display is %dx%d, not the -w/-h %dx%d", size[0], size[1], d.W, d.H)
 			}
 			d.W, d.H = size[0]&^1, size[1]&^1 // encoders want even sizes
 		}
 	}
 	if mode == "mirror" {
-		fmt.Fprintf(os.Stderr, "smon: mirroring %s (%dx%d)\n", name, d.W, d.H)
+		logx.OKf("display", "mirroring %s (%dx%d)", name, d.W, d.H)
 		d.output = name
 		return nil
 	}
@@ -354,15 +355,15 @@ func (d *Display) checkSource(mode string, props map[string]dbus.Variant) error 
 	if d.portalOut {
 		d.want, d.output = name, name
 		if name == "" {
-			fmt.Fprintln(os.Stderr, "smon: could not tell the virtual display's name: -pos and -input will not work")
+			logx.Warnf("display", "could not tell the virtual display's name: -pos and -input will not work")
 			return nil
 		}
-		fmt.Fprintf(os.Stderr, "smon: streaming %s (%dx%d)\n", name, d.W, d.H)
+		logx.OKf("display", "streaming %s (%dx%d)", name, d.W, d.H)
 		if p, ok := d.comp.(compositor.PortalOutput); ok {
 			spec := d.spec
 			spec.W, spec.H = d.W, d.H // the size the portal made
 			if err := p.PlaceOutput(name, spec); err != nil {
-				fmt.Fprintf(os.Stderr, "smon: placing %s: %v\n", name, err)
+				logx.Warnf("display", "placing %s: %v", name, err)
 			}
 		}
 		return nil

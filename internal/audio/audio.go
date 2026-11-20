@@ -4,11 +4,12 @@ package audio
 
 import (
 	"fmt"
-	"log"
 	"net"
 	"os"
 	"os/exec"
 	"strings"
+
+	"smon/internal/logx"
 
 	"smon/internal/display"
 	"smon/internal/gst"
@@ -38,12 +39,12 @@ func New(opus bool) *Audio {
 	}
 	for _, el := range need {
 		if !gst.HasElement(el) {
-			log.Printf("audio off: GStreamer element %s is missing (pulsesrc: gst-plugins-good, opusenc: gst-plugins-base)", el)
+			logx.Warnf("audio", "audio off: GStreamer element %s is missing (pulsesrc: gst-plugins-good, opusenc: gst-plugins-base)", el)
 			return nil
 		}
 	}
 	if _, err := exec.LookPath("pactl"); err != nil {
-		log.Print("audio off: pactl is missing (libpulse; works with pipewire-pulse)")
+		logx.Warnf("audio", "audio off: pactl is missing (libpulse; works with pipewire-pulse)")
 		return nil
 	}
 	return &Audio{}
@@ -90,7 +91,7 @@ func (a *Audio) Source() (string, error) {
 		}
 		a.d.AtClose(func() { _, _ = pactl("unload-module", mod) }) // also runs on Ctrl-C
 		a.created = true
-		fmt.Fprintf(os.Stderr, "smon: to hear sound on the receiver, pick the %q output in your sound settings\n", audioDesc)
+		logx.Hintf("audio", "to hear sound on the receiver, pick the %q output in your sound settings", audioDesc)
 	}
 	return audioSink + ".monitor", nil
 }
@@ -125,7 +126,7 @@ func (a *Audio) OpusRTP() (*net.UDPConn, *exec.Cmd, error) {
 	go func() {
 		err := cmd.Wait()
 		udp.Close() // ends the reader
-		log.Printf("audio pipeline exited (%v); video continues", err)
+		logx.Warnf("audio", "audio pipeline exited (%v); video continues", err)
 	}()
 	return udp, cmd, nil
 }

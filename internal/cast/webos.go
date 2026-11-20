@@ -7,11 +7,12 @@ package cast
 import (
 	"crypto/tls"
 	"fmt"
-	"log"
 	"net"
 	"os"
 	"path/filepath"
 	"time"
+
+	"smon/internal/logx"
 
 	"smon/internal/audio"
 	"smon/internal/config"
@@ -78,7 +79,7 @@ func webosRegister(ws *websocket.Conn, ip string) error {
 			return fmt.Errorf("webos register: %s", m.Error)
 		case "response":
 			if m.Payload["pairingType"] == "PROMPT" {
-				log.Print("webos: accept the smon request on the TV")
+				logx.Hintf("webos", "accept the smon request on the TV")
 			}
 		}
 	}
@@ -92,7 +93,7 @@ func saveWebOSKey(file, key string) {
 		err = os.WriteFile(file, []byte(key), 0o600)
 	}
 	if err != nil {
-		log.Printf("webos: pairing key not saved: %v", err)
+		logx.Warnf("webos", "pairing key not saved: %v", err)
 	}
 }
 
@@ -137,7 +138,7 @@ func castWebOS(d *display.Display, ip string, kbps int, addr string, snd *audio.
 
 	return web.Serve(d, addr, kbps, web.Options{Audio: snd, Ready: func(port int, token string) error { // view-only: no touch on a TV
 		url := fmt.Sprintf("http://%s:%d/?t=%s", local, port, token)
-		log.Printf("webos: opening %s on the TV", url)
+		logx.Infof("webos", "opening %s on the TV", url)
 		return webosOpen(ws, url)
 	}})
 }

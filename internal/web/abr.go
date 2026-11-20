@@ -2,11 +2,12 @@ package web
 
 import (
 	"fmt"
-	"log"
 	"os"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"smon/internal/logx"
 
 	"github.com/pion/interceptor"
 	"github.com/pion/interceptor/pkg/cc"
@@ -152,7 +153,7 @@ func (r *rateCtl) tick(now time.Time) {
 		r.lastUp = now
 	}
 	if next != r.cur {
-		log.Printf("bitrate %d -> %d kbps", r.cur, next)
+		logx.Debugf("abr", "bitrate %d -> %d kbps", r.cur, next)
 		r.cur = next
 		r.set(next)
 	}

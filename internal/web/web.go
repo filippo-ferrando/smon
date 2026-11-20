@@ -9,7 +9,6 @@ import (
 	_ "embed"
 	"encoding/json"
 	"fmt"
-	"log"
 	"net"
 	"net/http"
 	"os"
@@ -19,6 +18,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"smon/internal/logx"
 
 	"smon/internal/audio"
 	"smon/internal/config"
@@ -260,7 +261,7 @@ func (s *webServer) handleNoToken(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Query().Get("t") != "" {
 		reason = "with an old or wrong access token"
 	}
-	log.Printf("viewer page opened from %s %s (the URL was %q)", clientIP(r), reason, r.URL.RequestURI())
+	logx.Warnf("viewer", "page opened from %s %s (the URL was %q)", clientIP(r), reason, r.URL.RequestURI())
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(http.StatusForbidden)
 	_, _ = w.Write(noTokenHTML)
@@ -279,8 +280,8 @@ func (s *webServer) handleCA(w http.ResponseWriter, _ *http.Request) {
 func printURLs(scheme string, ips []string, port int, token string, opts Options) {
 	for i, ip := range ips {
 		url := fmt.Sprintf("%s://%s/?t=%s", scheme, net.JoinHostPort(ip, strconv.Itoa(port)), token)
-		fmt.Printf("open %s\n", url)
-		if i == 0 && opts.QR && isTerminal(os.Stdout) {
+		fmt.Printf("%s %s\n", logx.Bold(os.Stdout, "open"), logx.Accent(os.Stdout, url))
+		if i == 0 && opts.QR && logx.IsTerminal(os.Stdout) {
 			if q, err := renderQR(url); err == nil {
 				fmt.Print(q)
 			}
@@ -292,8 +293,11 @@ func printURLs(scheme string, ips []string, port int, token string, opts Options
 	}
 }
 
+// viewerScope names viewer n in log lines.
+func viewerScope(n int) string { return fmt.Sprint("viewer ", n) }
+
 func (s *webServer) handleIndex(w http.ResponseWriter, r *http.Request) {
-	log.Printf("viewer page opened from %s (%s)", clientIP(r), r.UserAgent())
+	logx.Debugf("viewer", "page opened from %s (%s)", clientIP(r), r.UserAgent())
 	http.SetCookie(w, &http.Cookie{
 		Name: tokenCookie, Value: s.token, Path: "/", MaxAge: 365 * 24 * 3600,
 		HttpOnly: true, Secure: s.caDER != nil, SameSite: http.SameSiteStrictMode,
@@ -310,7 +314,7 @@ func (s *webServer) handleOffer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !s.codec.offeredIn(offer.SDP) {
-		log.Printf("viewer at %s can't receive %s (its browser offers %s): restart smon with -codec h264", clientIP(r), s.codec.label, strings.Join(offeredCodecs(offer.SDP), ", "))
+		logx.Errorf("viewer", "%s can't receive %s (its browser offers %s): restart smon with -codec h264", clientIP(r), s.codec.label, strings.Join(offeredCodecs(offer.SDP), ", "))
 		http.Error(w, s.codec.unsupported(), http.StatusUnsupportedMediaType)
 		return
 	}
@@ -344,8 +348,8 @@ func (s *webServer) handleWS(w http.ResponseWriter, r *http.Request) {
 	}
 	defer c.Close()
 	owner := int(viewers.Add(1))
-	log.Printf("viewer %d connected (websocket)", owner)
-	defer log.Printf("viewer %d disconnected", owner)
+	logx.Infof(viewerScope(owner), "connected")
+	defer logx.Infof(viewerScope(owner), "disconnected")
 	m := s.monitor(1) // USB serves one monitor
 	cid := "ws-" + strconv.Itoa(owner)
 	s.alloc.join(1, cid)
@@ -415,7 +419,7 @@ func startWebAudio(a *audio.Audio, hub *auHub) (track *webrtc.TrackLocalStaticRT
 	}
 	udp, cmd, err := a.OpusRTP()
 	if err != nil {
-		log.Printf("audio off: %v", err)
+		logx.Warnf("audio", "audio off: %v", err)
 		return nil, nil, nil
 	}
 	go forwardAudio(udp, track, hub)
@@ -565,7 +569,14 @@ func answerOffer(newPC func() (*webrtc.PeerConnection, *bweProbe, error), tracks
 	})
 	var counted atomic.Bool // in the viewer count while connected
 	pc.OnConnectionStateChange(func(st webrtc.PeerConnectionState) {
-		log.Printf("viewer %d %s", owner, st)
+		switch st {
+		case webrtc.PeerConnectionStateConnected:
+			logx.OKf(viewerScope(owner), "video connected")
+		case webrtc.PeerConnectionStateFailed:
+			logx.Warnf(viewerScope(owner), "connection failed")
+		default:
+			logx.Debugf(viewerScope(owner), "connection %s", st)
+		}
 		switch st {
 		case webrtc.PeerConnectionStateConnected:
 			if hooks.keyframe != nil { // the periodic IDR may be seconds away
@@ -646,9 +657,9 @@ func readRTCP(sender *webrtc.RTPSender, keyframe func()) {
 // adaptive bitrate needs.
 func logABR(owner int, bwe *bweProbe) {
 	if bwe.last.Load() != 0 {
-		log.Printf("viewer %d: adaptive bitrate on (transport-cc feedback arriving)", owner)
+		logx.Debugf(viewerScope(owner), "adaptive bitrate on (transport-cc feedback arriving)")
 	} else {
-		log.Printf("viewer %d: adaptive bitrate off (no transport-cc feedback from the browser)", owner)
+		logx.Warnf(viewerScope(owner), "adaptive bitrate off (no transport-cc feedback from the browser)")
 	}
 }
 

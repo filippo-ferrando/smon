@@ -4,7 +4,7 @@
 package main
 
 import (
-	"log"
+	"fmt"
 	"os"
 	"os/signal"
 	"strings"
@@ -12,6 +12,8 @@ import (
 	"sync/atomic"
 	"syscall"
 	"time"
+
+	"smon/internal/logx"
 
 	"smon/internal/audio"
 	"smon/internal/cast"
@@ -25,37 +27,38 @@ import (
 func main() {
 	closeOnSignal() // before any output exists: Ctrl-C at the share picker too
 	o := parseArgs(os.Args[1:])
+	logx.SetVerbose(o.verbose || logx.Verbose())
 	if o.cmd == "list" {
 		if err := cast.List(); err != nil {
-			log.Fatal(err)
+			logx.Fatal(err)
 		}
 		return
 	}
 	if o.cmd == "cast" && (o.input || o.keyboard) {
-		log.Fatal("-input and -keyboard work only with web and usb")
+		logx.Usagef("-input and -keyboard work only with web and usb")
 	}
 	codec, err := gst.CodecByName(o.codec)
 	if err != nil {
-		log.Fatal(err)
+		logx.Fatal(err)
 	}
 	if codec != gst.H264 {
 		if strings.HasPrefix(o.target, "miracast:") || strings.HasPrefix(o.target, "airplay:") {
-			log.Fatalf("-codec %s: Miracast and AirPlay receivers take H.264 only", codec.Name)
+			logx.Usagef("-codec %s: Miracast and AirPlay receivers take H.264 only", codec.Name)
 		}
 		if err := codec.Check(); err != nil {
-			log.Fatal(err)
+			logx.Fatal(err)
 		}
 		if strings.HasPrefix(o.target, "webos:") {
-			log.Printf("-codec %s: the TV's browser may not decode it; use -codec h264 if the picture stays black", codec.Name)
+			logx.Warnf("webos", "-codec %s: the TV's browser may not decode it; use -codec h264 if the picture stays black", codec.Name)
 		}
 	}
 	comp, err := compositor.Detect(o.compositor)
 	if err != nil {
-		log.Fatal(err)
+		logx.Fatal(err)
 	}
 	if o.cmd == "usb" {
 		if err := web.ADBDevice(); err != nil { // fail before the share picker
-			log.Fatal(err)
+			logx.Fatal(err)
 		}
 	}
 
@@ -63,7 +66,7 @@ func main() {
 	spec := compositor.OutputSpec{W: o.width, H: o.height, FPS: o.fps, Pos: o.pos, Scale: o.scale}
 	d, err := display.New(comp, spec, o.mode, 1)
 	if err != nil {
-		log.Fatal(err)
+		logx.Fatal(err)
 	}
 	d.Codec = codec
 	if snd != nil {
@@ -79,16 +82,16 @@ func main() {
 	if o.input {
 		if tch, pen, err = d.EnableTouch(); err != nil {
 			d.Close()
-			log.Fatal(err)
+			logx.Fatal(err)
 		}
 	}
 	if o.keyboard {
 		if kbd, err = touch.NewKeyboard(); err != nil {
 			d.Close()
-			log.Fatal(err)
+			logx.Fatal(err)
 		}
 		d.AtClose(kbd.Close)
-		log.Print("keyboard input enabled: viewers can type into the desktop")
+		logx.OKf("keyboard", "keyboard input enabled: viewers can type into the desktop")
 	}
 	opts := web.Options{Touch: tch, Pen: pen, Keyboard: kbd, Audio: snd, Rotate: o.rotate && o.mode == "extend", TLS: o.tls, QR: o.qr, NewToken: o.newToken}
 	if o.monitors > 1 {
@@ -111,7 +114,7 @@ func main() {
 		select {} // the Ctrl-C stopped the stream: not an error; the handler exits
 	}
 	if err != nil {
-		log.Fatal(err)
+		logx.Fatal(err)
 	}
 }
 
@@ -135,7 +138,7 @@ func newMonitor(comp compositor.Compositor, spec compositor.OutputSpec, codec *g
 	)
 	if o.input {
 		if tch, pen, err = d.EnableTouch(); err != nil {
-			log.Printf("monitor %d: no touch input: %v", n, err)
+			logx.Warnf(monitorScope(n), "no touch input: %v", err)
 		}
 	}
 	return d, tch, pen, nil
@@ -227,12 +230,15 @@ func shutdown() {
 		select {
 		case <-done:
 		case <-signals:
-			log.Print("removing the virtual monitors without waiting")
+			logx.Warnf("", "removing the virtual monitors without waiting")
 		case <-time.After(closeTimeout):
-			log.Print("closing is stuck; removing the virtual monitors anyway")
+			logx.Warnf("", "closing is stuck; removing the virtual monitors anyway")
 		}
 		display.DestroyOutputs() // also any whose share picker is still up
 	})
 }
 
 const closeTimeout = 5 * time.Second
+
+// monitorScope names monitor n in log lines.
+func monitorScope(n int) string { return fmt.Sprint("monitor ", n) }

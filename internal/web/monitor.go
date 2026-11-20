@@ -5,13 +5,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
 	"net"
 	"net/http"
 	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"smon/internal/logx"
 
 	"github.com/pion/webrtc/v4"
 
@@ -60,7 +61,7 @@ func startMonitor(d *display.Display, n, kbps int, vc videoCodec, in *inputs) (*
 	m.hub = &auHub{needKey: m.keyframe}
 	m.peer = peerHooks{keyframe: m.keyframe}
 	if !gst.LiveBitrate(pipe.Encoder) {
-		log.Printf("adaptive bitrate off: encoder %s can't change bitrate while it runs", pipe.Encoder)
+		logx.Warnf("abr", "adaptive bitrate off: encoder %s can't change bitrate while it runs", pipe.Encoder)
 	} else if abrEnabled() {
 		m.peer.abr = newRateCtl(m.setBitrate, kbps)
 		go m.peer.abr.run()
@@ -121,7 +122,7 @@ func (m *monitor) orient(portrait bool) {
 	if !m.d.CanResize() { // its size never changes: d.W and d.H are safe to read
 		if m.d.W != m.d.H && portrait != m.upright.Load() {
 			m.noTurn.Do(func() {
-				log.Printf("monitor %d: the viewer turned, but this compositor can't change the monitor's size while it runs: restart smon (with -portrait for an upright one)", m.n)
+				logx.Warnf(monitorScope(m.n), "the viewer turned, but this compositor can't change the monitor's size while it runs: restart smon (with -portrait for an upright one)")
 			})
 		}
 		return
@@ -149,11 +150,11 @@ func (m *monitor) turn() {
 		m.pipeline().Stop() // the viewers keep the last frame meanwhile
 		err := m.d.Resize(w, h)
 		if err != nil {
-			log.Printf("monitor %d: can't turn it %s: %v", m.n, orientation(want), err)
+			logx.Warnf(monitorScope(m.n), "can't turn it %s: %v", orientation(want), err)
 		}
 		p, perr := m.d.RTPTo(m.udp, kbps, rtpMTU, webGOP*m.d.FPS)
 		if perr != nil && err == nil { // the new size won't encode: back to the old one
-			log.Printf("monitor %d: no stream at %dx%d: %v", m.n, w, h, perr)
+			logx.Errorf(monitorScope(m.n), "no stream at %dx%d: %v", w, h, perr)
 			err = perr
 			if m.d.Resize(h, w) == nil {
 				p, perr = m.d.RTPTo(m.udp, kbps, rtpMTU, webGOP*m.d.FPS)
@@ -171,7 +172,7 @@ func (m *monitor) turn() {
 		if err != nil {
 			return // stays as it was: don't try again until the viewer turns again
 		}
-		log.Printf("monitor %d (%s) turned %s: %dx%d", m.n, m.d.Output(), orientation(want), m.d.W, m.d.H)
+		logx.Infof(monitorScope(m.n), "%s turned %s: %dx%d", m.d.Output(), orientation(want), m.d.W, m.d.H)
 	}
 }
 
@@ -208,7 +209,7 @@ func (s *webServer) createMonitor(n int, portrait bool) error {
 	// the new output by what appeared since must not see two appear.
 	s.creating.Lock()
 	defer s.creating.Unlock()
-	log.Printf("creating monitor %d for a new viewer", n)
+	logx.Infof(monitorScope(n), "creating it for a new viewer")
 	d, tch, pen, err := s.newMonitor(n, portrait)
 	if err != nil {
 		return err
@@ -223,7 +224,7 @@ func (s *webServer) createMonitor(n int, portrait bool) error {
 	s.mu.Unlock()
 	go func() {
 		if err := m.wait(); err != nil && s.monitor(n) == m {
-			log.Printf("monitor %d: gstreamer exited: %v", n, err)
+			logx.Errorf(monitorScope(n), "gstreamer exited: %v", err)
 		}
 	}()
 	return nil
@@ -238,7 +239,7 @@ func (s *webServer) destroyMonitor(n int) {
 	if m == nil {
 		return
 	}
-	log.Printf("closing monitor %d (%s): no viewer for %v", n, m.d.Output(), monitorGrace)
+	logx.Infof(monitorScope(n), "closing %s: no viewer for %v", m.d.Output(), monitorGrace)
 	m.stop()
 	s.closeMonitor(m.d)
 }
@@ -275,7 +276,7 @@ func (s *webServer) handleClaim(w http.ResponseWriter, r *http.Request) {
 	}
 	n, err := s.alloc.claim(req.CID, req.M, req.Portrait)
 	if err != nil {
-		log.Printf("viewer at %s: no monitor: %v", clientIP(r), err)
+		logx.Errorf("viewer", "%s: no monitor: %v", clientIP(r), err)
 	}
 	switch {
 	case errors.Is(err, errNoMonitor):
@@ -325,9 +326,12 @@ func (s *webServer) orient(n int, cid string, portrait bool) {
 	}
 	if v := s.alloc.viewers(n); v > 1 {
 		if up := m.upright.Load(); portrait != up {
-			log.Printf("monitor %d: a viewer turned, but %d devices show it: it stays %s", n, v, orientation(up))
+			logx.Infof(monitorScope(n), "a viewer turned, but %d devices show it: it stays %s", v, orientation(up))
 		}
 		return
 	}
 	m.orient(portrait)
 }
+
+// monitorScope names monitor n in log lines.
+func monitorScope(n int) string { return fmt.Sprint("monitor ", n) }

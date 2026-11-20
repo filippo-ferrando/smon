@@ -18,7 +18,6 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
-	"log"
 	"math"
 	"net"
 	"net/textproto"
@@ -26,6 +25,8 @@ import (
 	"strconv"
 	"sync"
 	"time"
+
+	"smon/internal/logx"
 
 	"howett.net/plist"
 
@@ -235,7 +236,7 @@ func castAirPlay(d *display.Display, addr string, kbps int) error {
 	go func() { errc <- mirror(udp, data, stream, d.W, d.H) }()
 	go func() { errc <- fmt.Errorf("gstreamer exited: %v", gst.Wait()) }()
 	go func() { errc <- a.heartbeat(done) }()
-	log.Printf("airplay: mirroring %dx%d to %s", d.W, d.H, addr)
+	logx.OKf("airplay", "mirroring %dx%d to %s", d.W, d.H, addr)
 	return <-errc // on Ctrl-C the receiver just sees the connections close
 }
 

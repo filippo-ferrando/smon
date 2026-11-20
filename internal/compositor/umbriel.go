@@ -3,7 +3,6 @@ package compositor
 import (
 	"encoding/json"
 	"fmt"
-	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -11,6 +10,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"smon/internal/logx"
 
 	"smon/internal/touch"
 )
@@ -60,7 +61,7 @@ func (u umbriel) CreateOutput(spec OutputSpec) (string, error) {
 
 func (umbriel) DestroyOutput(name string) {
 	if out, err := exec.Command("umbriel", "output-destroy", name).CombinedOutput(); err != nil {
-		log.Printf("umbriel output-destroy %s: %v: %s", name, err, strings.TrimSpace(string(out)))
+		logx.Warnf("umbriel", "output-destroy %s: %v: %s", name, err, strings.TrimSpace(string(out)))
 	}
 	unsetPos(name) // leave no override behind to fight the saved layout
 	_ = exec.Command("umbriel", "config", "unset", scaleKey(name)).Run()

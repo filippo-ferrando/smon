@@ -3,11 +3,12 @@ package web
 import (
 	"errors"
 	"fmt"
-	"log"
 	"net"
 	"os/exec"
 	"strconv"
 	"strings"
+
+	"smon/internal/logx"
 
 	"smon/internal/display"
 )
@@ -60,7 +61,7 @@ func openOnTablet(d *display.Display, port int, token string) error {
 	}
 	d.AtClose(func() { _ = exec.Command("adb", "reverse", "--remove", p).Run() })
 	url := fmt.Sprintf("http://localhost:%d/?t=%s", port, token)
-	log.Printf("usb: opening %s on the tablet", url)
+	logx.Infof("usb", "opening %s on the tablet", url)
 	// adb shell joins its arguments into a remote shell command: quote the URL.
 	if out, err := exec.Command("adb", "shell", "am", "start", "-a", "android.intent.action.VIEW", "-d", "'"+url+"'").CombinedOutput(); err != nil {
 		return fmt.Errorf("adb am start: %w: %s", err, out)

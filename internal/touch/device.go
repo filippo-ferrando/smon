@@ -3,10 +3,11 @@ package touch
 import (
 	"encoding/binary"
 	"fmt"
-	"log"
 	"os"
 	"strings"
 	"unsafe"
+
+	"smon/internal/logx"
 
 	"golang.org/x/sys/unix"
 )
@@ -145,7 +146,7 @@ func (w *writer) write(evs []ev) {
 	}
 	if _, err := w.f.Write(buf); err != nil && !w.warned {
 		w.warned = true
-		log.Printf("%s: uinput write: %v", w.name, err)
+		logx.Warnf("input", "%s: uinput write: %v", w.name, err)
 	}
 }
 

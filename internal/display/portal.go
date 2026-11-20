@@ -3,9 +3,10 @@ package display
 import (
 	"errors"
 	"fmt"
-	"log"
 	"os"
 	"strings"
+
+	"smon/internal/logx"
 
 	"github.com/godbus/dbus/v5"
 
@@ -132,6 +133,6 @@ func (d *Display) saveToken(mode, tok string) {
 		err = os.WriteFile(d.tokenPath(mode), []byte(tok), 0o600)
 	}
 	if err != nil {
-		log.Printf("restore token not saved: %v", err)
+		logx.Warnf("portal", "restore token not saved: %v", err)
 	}
 }

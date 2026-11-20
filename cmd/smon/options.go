@@ -4,6 +4,8 @@ import (
 	"flag"
 	"fmt"
 	"os"
+
+	"smon/internal/logx"
 )
 
 const usage = `usage:
@@ -36,6 +38,7 @@ type options struct {
 	tls        bool
 	qr         bool
 	newToken   bool
+	verbose    bool
 }
 
 // parseArgs parses args (os.Args without the program name). It exits with
@@ -67,23 +70,20 @@ func parseArgs(args []string) options {
 	fs.BoolVar(&o.tls, "tls", false, "web: serve the viewer over HTTPS with smon's own certificate; install it on the device once (see the docs) for app install and keeping the screen awake")
 	fs.BoolVar(&o.qr, "qr", true, "web: also print the viewer URL as a QR code")
 	fs.BoolVar(&o.newToken, "new-token", false, "web/usb: replace the saved access token, so old URLs stop working")
+	fs.BoolVar(&o.verbose, "v", false, "verbose: also log detail such as bitrate changes, encoder benchmarks and viewer connection states (or set SMON_DEBUG=1)")
 	_ = fs.Parse(args[1:]) // ExitOnError: never returns an error
 
 	if o.scale < 0.25 || o.scale > 4 {
-		fmt.Fprintf(os.Stderr, "bad -scale %g (0.25 to 4)\n", o.scale)
-		os.Exit(2)
+		logx.Usagef("bad -scale %g (0.25 to 4)", o.scale)
 	}
 	if o.mode == "mirror" && (o.scale != 1 || o.portrait) {
-		fmt.Fprintln(os.Stderr, "-scale and -portrait apply to extend mode only")
-		os.Exit(2)
+		logx.Usagef("-scale and -portrait apply to extend mode only")
 	}
 	if o.monitors < 1 || o.monitors > 8 {
-		fmt.Fprintf(os.Stderr, "bad -monitors %d (1 to 8)\n", o.monitors)
-		os.Exit(2)
+		logx.Usagef("bad -monitors %d (1 to 8)", o.monitors)
 	}
 	if o.monitors > 1 && (args[0] != "web" || o.mode != "extend") {
-		fmt.Fprintln(os.Stderr, "-monitors works with smon web in extend mode only")
-		os.Exit(2)
+		logx.Usagef("-monitors works with smon web in extend mode only")
 	}
 	if o.portrait && o.width > o.height {
 		o.width, o.height = o.height, o.width

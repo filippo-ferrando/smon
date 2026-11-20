@@ -7,13 +7,14 @@ import (
 	"bufio"
 	"fmt"
 	"io"
-	"log"
 	"net"
 	"net/textproto"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	"smon/internal/logx"
 )
 
 // wfdParams is the stream format negotiated with a sink.
@@ -202,7 +203,7 @@ func runWFD(c net.Conn, sendAudio bool, play func(wfdParams) (stop func(), done 
 	if err != nil {
 		return err
 	}
-	log.Printf("miracast: streaming %dx%d@%d audio=%v to %s:%d", p.W, p.H, p.FPS, p.Audio, c.RemoteAddr().(*net.TCPAddr).IP, p.Port)
+	logx.OKf("miracast", "streaming %dx%d@%d audio=%v to %s:%d", p.W, p.H, p.FPS, p.Audio, c.RemoteAddr().(*net.TCPAddr).IP, p.Port)
 	stop, done, err := play(p)
 	if err != nil {
 		return err
@@ -237,7 +238,7 @@ func (w *wfdConn) negotiate(sendAudio bool) (wfdParams, error) {
 		return wfdParams{}, fmt.Errorf("M3: %w", err)
 	}
 	if !p.Audio && sendAudio {
-		log.Print("miracast: the sink takes no AAC audio; video only")
+		logx.Warnf("miracast", "the sink takes no AAC audio; video only")
 	}
 	p.Audio = p.Audio && sendAudio
 	audio := "none"
@@ -287,13 +288,13 @@ func (w *wfdConn) serve(done <-chan error) error {
 		case m := <-w.reqs:
 			_ = w.reply(m, "") // a dead connection shows up as w.closed
 			if strings.HasPrefix(m.first, "TEARDOWN ") || strings.Contains(m.body, "wfd_trigger_method: TEARDOWN") {
-				log.Print("miracast: sink tore down the session")
+				logx.Infof("miracast", "sink tore down the session")
 				return nil
 			}
 		case <-keep.C:
 			go func() {
 				if _, err := w.request("GET_PARAMETER", wfdURL, "Session: "+wfdSession+"\r\n", ""); err != nil {
-					log.Printf("miracast: keepalive: %v", err)
+					logx.Warnf("miracast", "keepalive: %v", err)
 					_ = w.c.Close()
 				}
 			}()

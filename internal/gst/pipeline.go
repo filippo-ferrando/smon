@@ -82,10 +82,11 @@ import "C"
 
 import (
 	"errors"
-	"log"
 	"sync"
 	"time"
 	"unsafe"
+
+	"smon/internal/logx"
 )
 
 var gstInit sync.Once
@@ -212,7 +213,7 @@ func (g *Pipeline) SetBitrate(kbps int) {
 		C.free(unsafe.Pointer(cprop))
 		if !ok && g.Encoder != "" && !g.rateWarned {
 			g.rateWarned = true
-			log.Printf("encoder %s has no %s property: bitrate stays put", g.Encoder, prop)
+			logx.Warnf("encoder", "encoder %s has no %s property: bitrate stays put", g.Encoder, prop)
 		}
 	}
 }

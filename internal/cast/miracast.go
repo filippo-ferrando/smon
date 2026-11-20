@@ -6,11 +6,12 @@ package cast
 import (
 	"errors"
 	"fmt"
-	"log"
 	"net"
 	"os/user"
 	"strings"
 	"time"
+
+	"smon/internal/logx"
 
 	"smon/internal/audio"
 	"smon/internal/display"
@@ -123,12 +124,12 @@ func castMiracast(d *display.Display, target string, kbps int, snd *audio.Audio)
 	if err != nil {
 		return fmt.Errorf("sink never connected to port %d (firewall? `sudo ufw allow %d/tcp`): %w", wfdPort, wfdPort, err)
 	}
-	log.Printf("miracast: sink connected from %s", c.RemoteAddr())
+	logx.OKf("miracast", "sink connected from %s", c.RemoteAddr())
 
 	src := "" // smon output device's monitor; "" sends video only
 	if snd != nil {
 		if src, err = snd.Source(); err != nil {
-			log.Printf("audio off: %v", err)
+			logx.Warnf("audio", "audio off: %v", err)
 		}
 	}
 	return runWFD(c, src != "", func(p wfdParams) (func(), <-chan error, error) {
@@ -192,7 +193,7 @@ func connectP2P(bus *dbus.Conn, peer p2pPeer) (disconnect func(), err error) {
 	}
 	var conn, active dbus.ObjectPath
 	var result map[string]dbus.Variant
-	log.Printf("miracast: connecting to %s (%s), accept the request on the TV", peer.Name, peer.MAC)
+	logx.Hintf("miracast", "connecting to %s (%s): accept the request on the TV", peer.Name, peer.MAC)
 	nm := bus.Object(nmDest, nmPath)
 	if err := nm.Call(nmDest+".AddAndActivateConnection2", 0, settings, dev.Path(), peer.Path, opts).Store(&conn, &active, &result); err != nil {
 		return nil, fmt.Errorf("AddAndActivateConnection2: %w", err)

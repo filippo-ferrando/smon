@@ -1,10 +1,8 @@
 package web
 
 import (
-	"os"
 	"strings"
 
-	"golang.org/x/sys/unix"
 	"rsc.io/qr"
 )
 
@@ -44,11 +42,4 @@ func renderQR(text string) (string, error) {
 		b.WriteString("\x1b[0m\n")
 	}
 	return b.String(), nil
-}
-
-// isTerminal reports whether f is a terminal: QR codes are only worth
-// printing when someone is looking at the output.
-func isTerminal(f *os.File) bool {
-	_, err := unix.IoctlGetTermios(int(f.Fd()), unix.TCGETS)
-	return err == nil
 }

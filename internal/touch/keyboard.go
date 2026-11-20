@@ -1,8 +1,9 @@
 package touch
 
 import (
-	"log"
 	"sync"
+
+	"smon/internal/logx"
 )
 
 // Keyboard is a virtual uinput keyboard fed by viewer key events. It types
@@ -84,7 +85,7 @@ func (k *Keyboard) Text(s string) {
 	defer k.mu.Unlock()
 	if skipped > 0 && !k.warned {
 		k.warned = true
-		log.Printf("keyboard: %d character(s) typed on the viewer have no key on a US layout; skipped", skipped)
+		logx.Warnf("keyboard", "%d character(s) typed on the viewer have no key on a US layout; skipped", skipped)
 	}
 	k.w.write(evs)
 }
