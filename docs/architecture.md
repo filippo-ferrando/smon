@@ -49,7 +49,7 @@ On exit, everything is undone in reverse order.
 | Path | What it holds |
 | --- | --- |
 | `cmd/smon` | Command line: flag parsing and wiring |
-| `internal/compositor` | Virtual output, placement, scale and input mapping on umbriel, Hyprland, Sway, KDE Plasma and GNOME |
+| `internal/compositor` | Virtual output, placement, scale and input mapping on umbriel, Hyprland, Sway, labwc, KDE Plasma and GNOME |
 | `internal/display` | Portal screencast of one monitor (SMON-n) or a mirrored screen, and its encoder pipeline |
 | `internal/gst` | In-process GStreamer pipelines, the codec table, encoder selection, keyframe and bitrate control |
 | `internal/rtpau` | Access units from RTP: H.264 and H.265 as Annex-B, AV1 as OBUs (for WebCodecs) |
@@ -57,7 +57,7 @@ On exit, everything is undone in reverse order.
 | `internal/cast` | Miracast (WFD RTSP), AirPlay, webOS, receiver discovery |
 | `internal/cast/playfair` | FairPlay handshake for AirPlay, vendored from UxPlay (C, via cgo) |
 | `internal/audio` | The *Second Monitor (smon)* sound output and its capture |
-| `internal/touch` | Virtual uinput touchscreen, pen tablet and keyboard |
+| `internal/touch` | Virtual uinput touchscreen, pen tablet and keyboard, and the keyboard smon presses labwc keybinds on |
 | `internal/config` | Per-user state directory |
 
 ## Adding a compositor

@@ -4,20 +4,21 @@ smon needs two things from a compositor: a way to create a virtual output, and a
 xdg-desktop-portal ScreenCast implementation to capture it. The portal part is the same
 everywhere. The output, placement, scale and input mapping are what each backend implements.
 
-| | umbriel | Hyprland | Sway | KDE Plasma | GNOME |
-| --- | --- | --- | --- | --- | --- |
-| Detected by | `umbriel` on `PATH` | `$HYPRLAND_INSTANCE_SIGNATURE` set | `$SWAYSOCK` set | `$KDE_FULL_SESSION=true` or `KDE` in `$XDG_CURRENT_DESKTOP` | `GNOME` in `$XDG_CURRENT_DESKTOP` |
-| Virtual output | `umbriel output-create` | `hyprctl output create headless` | `swaymsg create_output` | The portal (ScreenCast `VIRTUAL` source) | The portal (ScreenCast `VIRTUAL` source) |
-| Output name | `SMON-<n>` | `SMON-<n>` | `HEADLESS-<n>` | `Virtual-…` | `Meta-<n>` |
-| Size | `-w`/`-h`/`-fps` | `-w`/`-h`/`-fps` | `-w`/`-h`/`-fps` | Chosen in the portal dialog (6.8+), else 1920x1080 at 60 Hz | `-w`/`-h` |
-| `-scale` | `output.<name>.scale` | Monitor rule | `output … scale` | `kscreen-doctor` | Mutter DisplayConfig (nearest supported scale) |
-| Default placement | Saved display layout | `auto-right` | Sway's default | KWin's default | Mutter's default |
-| Share picker | umbriel share picker | hyprland-share-picker | xdg-desktop-portal-wlr chooser | Plasma's share dialog | GNOME's share dialog |
-| Touch and pen mapping | All touchscreens / tablets | Only smon's devices (with a fallback) | Only smon's devices | Only smon's devices | Only smon's devices |
+| | umbriel | Hyprland | Sway | labwc | KDE Plasma | GNOME |
+| --- | --- | --- | --- | --- | --- | --- |
+| Detected by | `umbriel` on `PATH` | `$HYPRLAND_INSTANCE_SIGNATURE` set | `$SWAYSOCK` set | `$LABWC_PID` set | `$KDE_FULL_SESSION=true` or `KDE` in `$XDG_CURRENT_DESKTOP` | `GNOME` in `$XDG_CURRENT_DESKTOP` |
+| Virtual output | `umbriel output-create` | `hyprctl output create headless` | `swaymsg create_output` | Its `VirtualOutputAdd` keybind, pressed by smon | The portal (ScreenCast `VIRTUAL` source) | The portal (ScreenCast `VIRTUAL` source) |
+| Output name | `SMON-<n>` | `SMON-<n>` | `HEADLESS-<n>` | `SMON-<n>` | `Virtual-…` | `Meta-<n>` |
+| Size | `-w`/`-h`/`-fps` | `-w`/`-h`/`-fps` | `-w`/`-h`/`-fps` | `-w`/`-h`/`-fps` | Chosen in the portal dialog (6.8+), else 1920x1080 at 60 Hz | `-w`/`-h` |
+| `-scale` | `output.<name>.scale` | Monitor rule | `output … scale` | `wlr-randr --scale` | `kscreen-doctor` | Mutter DisplayConfig (nearest supported scale) |
+| Default placement | Saved display layout | `auto-right` | Sway's default | labwc's default | KWin's default | Mutter's default |
+| Share picker | umbriel share picker | hyprland-share-picker | xdg-desktop-portal-wlr chooser | xdg-desktop-portal-wlr chooser | Plasma's share dialog | GNOME's share dialog |
+| Touch and pen mapping | All touchscreens / tablets | Only smon's devices (with a fallback) | Only smon's devices | `rc.xml` rules you add: smon's touchscreen, every tablet | Only smon's devices | Only smon's devices |
 
-Every feature works on all five, with the differences listed here.
+Every feature works on all six, with the differences listed here. labwc needs a
+[one-time setup](#setup-on-labwc) in `rc.xml`.
 
-> **Note:** the Sway, KDE Plasma and GNOME backends were written from the compositors' sources
+> **Note:** the Sway, labwc, KDE Plasma and GNOME backends were written from the compositors' sources
 > and are covered by unit tests, but have not been run on real sessions yet. Reports are welcome.
 
 ## umbriel
@@ -132,6 +133,76 @@ by default slurp, wmenu, wofi, rofi and others, whichever is installed). Pick th
 `-input` maps only smon's touchscreen (`input 4617:21312:smon_touchscreen map_to_output …`),
 so a built-in touch panel keeps working on its own screen. On exit smon resets the rule to
 `map_to_output *`.
+
+## labwc
+
+Requires labwc **0.7.1 or newer** (for the `VirtualOutputAdd` and `VirtualOutputRemove`
+actions and per-device touch rules), `xdg-desktop-portal-wlr`, `wlr-randr`, and write access to `/dev/uinput` (see
+[Touch input permissions](installation.md#touch-input-permissions)), even without `-input`.
+
+labwc has no IPC: its actions run only from keybinds, menus and mouse bindings, and touch and
+pen mapping live only in `rc.xml`. smon never edits your config, so labwc needs a **one-time
+setup** in `~/.config/labwc/rc.xml`. smon then presses those keybinds itself and handles
+everything else at runtime.
+
+### Setup on labwc
+
+Add a pair of keybinds for each monitor inside `<keyboard>`: SMON-1 for one monitor, up to
+SMON-8 with `-monitors`. Monitor n is added with **Super+Ctrl+F\<n\>** and removed with
+**Super+Alt+F\<n\>**. smon presses exactly these keys, so they can't be changed.
+
+```xml
+<keyboard>
+  <keybind key="W-C-F1"><action name="VirtualOutputAdd" output_name="SMON-1" /></keybind>
+  <keybind key="W-A-F1"><action name="VirtualOutputRemove" output_name="SMON-1" /></keybind>
+  <!-- with -monitors 2 and up -->
+  <keybind key="W-C-F2"><action name="VirtualOutputAdd" output_name="SMON-2" /></keybind>
+  <keybind key="W-A-F2"><action name="VirtualOutputRemove" output_name="SMON-2" /></keybind>
+</keyboard>
+```
+
+For `-input`, also map smon's touchscreen and pen (at the top level of `<labwc_config>`):
+
+```xml
+<touch deviceName="smon touchscreen" mapToOutput="SMON-1" />
+<touch deviceName="smon touchscreen 2" mapToOutput="SMON-2" />
+<tablet mapToOutput="SMON-1" />
+```
+
+Then run `labwc --reconfigure`. If a keybind is missing, smon stops with an error that prints
+the lines to add; if a touch or tablet rule is missing, it warns and prints the rule.
+
+### Virtual output on labwc
+
+smon presses Super+Ctrl+F\<n\> on its own uinput keyboard (`smon shortcuts`), waits for
+**SMON-n** to appear, then sets its mode to `-w`x`-h`@`-fps` with `wlr-randr`. On exit it
+presses Super+Alt+F\<n\>. A SMON-n left by a crash is removed the same way before the new one
+is made. The keybinds work wherever the keyboard focus is, but not while the screen is locked.
+
+### Placement on labwc
+
+With no `-pos`, labwc places the output to the right of the others. `-pos
+right|left|above|below` places it next to your other monitors with `wlr-randr`. Move it later
+with `wlr-randr --output SMON-1 --pos X,Y` or a tool such as wdisplays.
+
+### Scale on labwc
+
+`-scale` sets the output's scale with `wlr-randr --scale`.
+
+### Share picker on labwc
+
+xdg-desktop-portal-wlr picks the output with its chooser (see [Sway](#share-picker-on-sway)).
+Pick **SMON-1** in extend mode. The portal hands out restore tokens only with
+`XDPW_PERSIST_MODE=transient` or `permanent` set. Unlike on Sway, the output keeps its name
+between runs, so extend mode can skip the picker too.
+
+### Touch input on labwc
+
+labwc maps input only from `rc.xml`, so the rules in [Setup on labwc](#setup-on-labwc) do the
+mapping and smon only checks that they are there. Touch rules name smon's own touchscreen, so a
+built-in touch panel keeps working. labwc has a single `<tablet>` rule for **every** pen
+tablet: with it, a drawing tablet you own also maps to SMON-1, and with
+[several monitors](usage.md#several-monitors) the pen works on one monitor only.
 
 ## KDE Plasma
 

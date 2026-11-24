@@ -60,6 +60,9 @@ setting, removed on exit. How it is scoped depends on the compositor:
   touch and pen work on SMON-1 only. See [umbriel](compositors.md#touch-input-on-umbriel).
 - **Hyprland** maps only smon's devices, falling back to all touchscreens (or tablets) if the
   config rejects per-device rules. See [Hyprland](compositors.md#touch-input-on-hyprland).
+- **labwc** maps input only from `rc.xml`: add the rules in
+  [Setup on labwc](compositors.md#setup-on-labwc). smon checks for them and warns when they are
+  missing. The touch rule names smon's touchscreen; the tablet rule covers every pen tablet.
 - **Sway**, **KDE Plasma** and **GNOME** map only smon's devices. See
   [Sway](compositors.md#touch-input-on-sway), [KDE Plasma](compositors.md#touch-input-on-kde-plasma)
   and [GNOME](compositors.md#gnome).

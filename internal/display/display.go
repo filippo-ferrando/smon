@@ -92,6 +92,8 @@ func New(comp compositor.Compositor, spec compositor.OutputSpec, mode string, n 
 			hint += " and tick \"Allow a restore token\" so later runs skip the picker"
 		case "sway":
 			hint += " (xdg-desktop-portal-wlr remembers the choice only with XDPW_PERSIST_MODE set, and never for extend, whose output name changes every run)"
+		case "labwc":
+			hint += " (xdg-desktop-portal-wlr remembers the choice only with XDPW_PERSIST_MODE set)"
 		}
 		logx.Hintf("display", "%s", hint)
 	}

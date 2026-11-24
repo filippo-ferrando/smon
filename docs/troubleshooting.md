@@ -4,9 +4,9 @@ Start smon from a terminal: it logs the encoder benchmark, bitrate changes and e
 
 ### "no supported compositor found"
 
-smon didn't find Hyprland, Sway or KDE Plasma from the session's environment variables, or the
+smon didn't find Hyprland, Sway, labwc, KDE Plasma or GNOME from the session's environment variables, or the
 `umbriel` command. Run it from inside your Wayland session, or force a backend with
-`-compositor umbriel|hyprland|sway|kde`.
+`-compositor umbriel|hyprland|sway|labwc|kde|gnome`.
 Other compositors are [not supported yet](architecture.md#adding-a-compositor).
 
 ### The share picker shows up every time
@@ -14,6 +14,7 @@ Other compositors are [not supported yet](architecture.md#adding-a-compositor).
 - On Hyprland, tick **Allow a restore token** in hyprland-share-picker.
 - On Sway, start xdg-desktop-portal-wlr with `XDPW_PERSIST_MODE=permanent`. Extend mode still asks
   every run, because Sway gives the output a new name each time.
+- On labwc, the same `XDPW_PERSIST_MODE` setting applies; extend mode is remembered too.
 - On KDE Plasma, leave **Allow the application to do this without asking next time** ticked
   (virtual displays are remembered from Plasma 6.3).
 - In extend mode, make sure you pick the virtual output. If smon receives another screen, it forgets the
@@ -107,4 +108,5 @@ To pair again, delete `~/.config/smon/webos-<ip>.key`.
 The next run of smon removes a stale SMON-1 before creating a new one. To remove it by hand,
 use `umbriel output-destroy SMON-1` or `hyprctl output remove SMON-1` (and the same for SMON-2
 and up with `-monitors`). On Sway, the next run removes every output listed in
-`~/.config/smon/sway-output`.
+`~/.config/smon/sway-output`. On labwc, press the monitor's remove keybind (Super+Alt+F1 for
+SMON-1).

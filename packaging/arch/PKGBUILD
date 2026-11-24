@@ -40,6 +40,7 @@ optdepends=(
   'networkmanager: Miracast'
   'dnsmasq: Miracast when smon is the group owner'
   'avahi: AirPlay receiver discovery'
+  'wlr-randr: the labwc backend'
 )
 source=("smon::git+${SMON_REPO:-https://git.fferrando.cc/rdfilippo/smon.git}"
         '60-smon-uinput.rules')

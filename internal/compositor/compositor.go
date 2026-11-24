@@ -13,7 +13,7 @@ import (
 )
 
 // OutputName is the virtual output smon creates in extend mode where the
-// compositor lets it pick the name (umbriel, Hyprland).
+// compositor lets it pick the name (umbriel, Hyprland, labwc).
 const OutputName = "SMON-1"
 
 // MonitorName is the name of smon's monitor n (1-based) where smon picks it:
@@ -24,7 +24,7 @@ func MonitorName(n int) string { return fmt.Sprintf("SMON-%d", max(n, 1)) }
 // placed Pos (""; or right|left|above|below) and scaled by Scale (0 or 1: not
 // scaled; 2 makes everything on it twice as big, for a high-DPI tablet).
 type OutputSpec struct {
-	Name      string // where smon names outputs (umbriel, Hyprland); "" is OutputName
+	Name      string // where smon names outputs (umbriel, Hyprland, labwc); "" is OutputName
 	W, H, FPS int
 	Pos       string
 	Scale     float64
@@ -113,7 +113,7 @@ type Output struct {
 }
 
 // Detect picks the backend: the -compositor flag if given, else the one the
-// session runs (Hyprland, Sway, KDE Plasma), else umbriel when it is installed.
+// session runs (Hyprland, Sway, labwc, KDE Plasma, GNOME), else umbriel when it is installed.
 func Detect(flag string) (Compositor, error) {
 	switch flag {
 	case "umbriel":
@@ -122,19 +122,23 @@ func Detect(flag string) (Compositor, error) {
 		return &hyprland{}, nil
 	case "sway":
 		return &sway{}, nil
+	case "labwc":
+		return &labwc{}, nil
 	case "kde":
 		return &kde{}, nil
 	case "gnome":
 		return &gnome{}, nil
 	case "":
 	default:
-		return nil, fmt.Errorf("bad -compositor %q (umbriel|hyprland|sway|kde|gnome)", flag)
+		return nil, fmt.Errorf("bad -compositor %q (umbriel|hyprland|sway|labwc|kde|gnome)", flag)
 	}
 	switch {
 	case os.Getenv("HYPRLAND_INSTANCE_SIGNATURE") != "":
 		return &hyprland{}, nil
 	case os.Getenv("SWAYSOCK") != "":
 		return &sway{}, nil
+	case os.Getenv("LABWC_PID") != "":
+		return &labwc{}, nil
 	case os.Getenv("KDE_FULL_SESSION") == "true", strings.Contains(os.Getenv("XDG_CURRENT_DESKTOP"), "KDE"):
 		return &kde{}, nil
 	case strings.Contains(os.Getenv("XDG_CURRENT_DESKTOP"), "GNOME"):
@@ -143,7 +147,7 @@ func Detect(flag string) (Compositor, error) {
 	if _, err := exec.LookPath("umbriel"); err == nil {
 		return umbriel{}, nil
 	}
-	return nil, fmt.Errorf("no supported compositor found (umbriel, Hyprland, Sway, KDE Plasma or GNOME); use -compositor to force one")
+	return nil, fmt.Errorf("no supported compositor found (umbriel, Hyprland, Sway, labwc, KDE Plasma or GNOME); use -compositor to force one")
 }
 
 // placeXY returns where a w x h output goes when placed pos (right|left|above|below)

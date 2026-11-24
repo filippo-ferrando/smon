@@ -56,14 +56,14 @@ Flags go after the command, for example `smon web -input -fps 60`.
 | `-qr` | `true` | `web` | Also print the viewer URL as a QR code (only on a terminal). |
 | `-new-token` | `false` | `web`, `usb` | Replace the saved access token, so links handed out before stop working. |
 | `-audio` | `true` | all but `list` | Add the *Second Monitor (smon)* sound output. `-audio=false` streams video only. See [Audio](audio.md). |
-| `-compositor` | detected | all but `list` | `umbriel`, `hyprland`, `sway`, `kde` or `gnome`. |
+| `-compositor` | detected | all but `list` | `umbriel`, `hyprland`, `sway`, `labwc`, `kde` or `gnome`. |
 
 In mirror mode the stream has the size of the screen you pick, whatever `-w` and `-h` say.
 
 ### Compositor detection
 
 Without `-compositor`, smon uses, in order: Hyprland when `$HYPRLAND_INSTANCE_SIGNATURE` is set,
-Sway when `$SWAYSOCK` is set, KDE Plasma when `$KDE_FULL_SESSION=true` or `$XDG_CURRENT_DESKTOP`
+Sway when `$SWAYSOCK` is set, labwc when `$LABWC_PID` is set, KDE Plasma when `$KDE_FULL_SESSION=true` or `$XDG_CURRENT_DESKTOP`
 contains `KDE`, GNOME when `$XDG_CURRENT_DESKTOP` contains `GNOME`, and umbriel when the
 `umbriel` command is on `PATH`. If none applies it exits
 with an error.
@@ -71,7 +71,7 @@ with an error.
 ## Extend and mirror
 
 - **`-mode extend`** (default) creates a virtual output and streams it. It is called **SMON-1**
-  on umbriel and Hyprland, `HEADLESS-<n>` on Sway, `Virtual-…` on KDE Plasma and `Meta-<n>` on
+  on umbriel, Hyprland and labwc, `HEADLESS-<n>` on Sway, `Virtual-…` on KDE Plasma and `Meta-<n>` on
   GNOME. The
   receiver becomes a second monitor: move windows to it, arrange it in your display settings.
   smon removes the output when it exits.
@@ -90,7 +90,7 @@ mode opens your compositor's share picker:
 The choice is saved as a restore token in `~/.config/smon/restore_token-<mode>` (with
 `-<n>` after it for [monitor n](#several-monitors)), so later runs don't ask. On Hyprland, tick **Allow a restore token** in the picker, or it asks every time.
 On Sway the choice is remembered only in mirror mode, and only with `XDPW_PERSIST_MODE` set. See
-[Sway](compositors.md#share-picker-on-sway).
+[Sway](compositors.md#share-picker-on-sway). On labwc it is remembered with `XDPW_PERSIST_MODE` set, in both modes.
 
 If extend mode receives a screen other than the virtual output, smon forgets the saved choice and exits
 with an error, so the next run asks again.
@@ -104,7 +104,7 @@ Where the virtual output appears depends on the compositor:
   [umbriel placement](compositors.md#placement-on-umbriel).
 - **Hyprland**: SMON-1 goes `auto-right` unless you pass `-pos` or have a monitor rule for it.
   See [Hyprland placement](compositors.md#placement-on-hyprland).
-- **Sway** and **KDE Plasma**: the compositor's own placement unless you pass `-pos`. Move it
+- **Sway**, **labwc** and **KDE Plasma**: the compositor's own placement unless you pass `-pos`. Move it
   later with your usual display tool.
 
 ## Scale and portrait
@@ -126,7 +126,7 @@ output's width and height, the desktop lays itself out again, and the picture co
 the new size a moment later, with the viewer still connected. The device's orientation counts
 when it connects too, so a phone held upright makes monitor 1 portrait.
 
-- It works on umbriel. Hyprland and Sway can resize smon's output while it runs too, so it
+- It works on umbriel. Hyprland, Sway and labwc can resize smon's output while it runs too, so it
   should work there, but it is untested on hardware. On KDE Plasma and GNOME the monitor keeps
   the orientation it was made with, and smon logs that it can't turn it.
 - With `-pos`, the monitor is placed again at its new size, unless you have rearranged the
@@ -184,6 +184,7 @@ times each codec's encoders separately, as for H.264 (see
 | `ANDROID_SERIAL` | With several Android devices attached, the one `smon usb` uses (standard `adb` variable). |
 | `HYPRLAND_INSTANCE_SIGNATURE` | Set by Hyprland. Its presence selects the Hyprland backend. |
 | `SWAYSOCK` | Set by Sway. Its presence selects the Sway backend. |
+| `LABWC_PID` | Set by labwc. Its presence selects the labwc backend. |
 | `KDE_FULL_SESSION`, `XDG_CURRENT_DESKTOP` | Set by Plasma and GNOME. They select the KDE or GNOME backend. |
 
 ## Files

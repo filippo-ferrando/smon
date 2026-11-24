@@ -14,7 +14,7 @@ playfair code, so you need a C toolchain and the GStreamer headers to build it.
 
 | Needed for | Requirement |
 | --- | --- |
-| Compositor | umbriel with `xdg-desktop-portal-umbriel`, **or** Hyprland 0.42+ (provides `hyprctl`) with `xdg-desktop-portal-hyprland`, **or** Sway 1.8+ (provides `swaymsg`) with `xdg-desktop-portal-wlr`, **or** KDE Plasma 6 with `xdg-desktop-portal-kde`, `kscreen-doctor` and `kwriteconfig6`, **or** GNOME with `xdg-desktop-portal-gnome` and `gsettings` |
+| Compositor | umbriel with `xdg-desktop-portal-umbriel`, **or** Hyprland 0.42+ (provides `hyprctl`) with `xdg-desktop-portal-hyprland`, **or** Sway 1.8+ (provides `swaymsg`) with `xdg-desktop-portal-wlr`, **or** labwc 0.7.1+ with `xdg-desktop-portal-wlr`, `wlr-randr`, write access to `/dev/uinput` and a [one-time setup](compositors.md#setup-on-labwc), **or** KDE Plasma 6 with `xdg-desktop-portal-kde`, `kscreen-doctor` and `kwriteconfig6`, **or** GNOME with `xdg-desktop-portal-gnome` and `gsettings` |
 | Screen capture | PipeWire and WirePlumber |
 | Video pipeline | GStreamer 1.2x with `pipewiresrc`, `h264parse`, `rtph264pay`, `mpegtsmux`, `rtpmp2tpay` |
 | H.264 encoder | `vah264enc` (hardware, VA-API) and/or `x264enc` (software) |
@@ -22,7 +22,7 @@ playfair code, so you need a C toolchain and the GStreamer headers to build it.
 | `smon usb` | `adb` (android-tools) |
 | Miracast | NetworkManager with a `wifi-p2p` capable device, plus `dnsmasq` (used when smon ends up group owner) |
 | AirPlay | `avahi-daemon` running (`avahi-browse` is used for discovery) |
-| Touch input (`-input`) | Write access to `/dev/uinput`, see [below](#touch-input-permissions) |
+| Touch input (`-input`), and extend mode on labwc | Write access to `/dev/uinput`, see [below](#touch-input-permissions) |
 | Building | Go (see `go.mod`), `gcc`, `pkg-config` |
 
 ## Arch Linux
@@ -49,6 +49,7 @@ sudo pacman -S --needed pipewire wireplumber pipewire-pulse libpulse \
 # umbriel: install umbriel and xdg-desktop-portal-umbriel
 sudo pacman -S --needed hyprland xdg-desktop-portal-hyprland   # Hyprland
 sudo pacman -S --needed sway xdg-desktop-portal-wlr             # Sway
+sudo pacman -S --needed labwc xdg-desktop-portal-wlr wlr-randr  # labwc (then see compositors.md#setup-on-labwc)
 sudo pacman -S --needed xdg-desktop-portal-kde libkscreen kconfig   # KDE Plasma (already there with plasma)
 sudo pacman -S --needed xdg-desktop-portal-gnome glib2              # GNOME (already there with gnome)
 ```

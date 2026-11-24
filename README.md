@@ -18,7 +18,7 @@
   <a href="https://git.fferrando.cc/rdfilippo/smon/actions?workflow=ci.yml"><img alt="CI" src="https://git.fferrando.cc/rdfilippo/smon/actions/workflows/ci.yml/badge.svg?label=ci"></a>
   <a href="https://git.fferrando.cc/rdfilippo/smon/releases"><img alt="Release" src="https://img.shields.io/gitea/v/release/rdfilippo/smon?gitea_url=https%3A%2F%2Fgit.fferrando.cc&label=release&color=2ea043"></a>
   <a href="go.mod"><img alt="Go" src="https://img.shields.io/badge/go-1.27-00ADD8?logo=go&logoColor=white"></a>
-  <img alt="Wayland" src="https://img.shields.io/badge/wayland-umbriel%20%7C%20Hyprland%20%7C%20Sway%20%7C%20KDE%20%7C%20GNOME-1d2840">
+  <img alt="Wayland" src="https://img.shields.io/badge/wayland-umbriel%20%7C%20Hyprland%20%7C%20Sway%20%7C%20labwc%20%7C%20KDE%20%7C%20GNOME-1d2840">
   <a href="LICENSE"><img alt="License: GPL-3.0-or-later" src="https://img.shields.io/badge/license-GPL--3.0--or--later-blue"></a>
 </p>
 
@@ -45,8 +45,8 @@
 - **Several monitors.** With `-monitors 3`, every tablet, phone or laptop that connects gets a
   monitor of its own, created on demand and removed when it leaves.
 - **High-DPI and portrait.** `-scale 2` keeps text readable on a sharp tablet, and the monitor
-  turns between landscape and portrait with the tablet or phone showing it (umbriel; Hyprland
-  and Sway untested). `-portrait` starts it upright.
+  turns between landscape and portrait with the tablet or phone showing it (umbriel; Hyprland,
+  Sway and labwc untested). `-portrait` starts it upright.
 - **Native casting.** Miracast over Wi-Fi Direct, open AirPlay receivers (UxPlay, RPiPlay), and
   LG webOS TVs.
 - **USB fallback.** No Wi-Fi? `smon usb` streams to an Android tablet over `adb`.
@@ -71,11 +71,12 @@
 | [umbriel](docs/compositors.md#umbriel) | Supported | Needs `xdg-desktop-portal-umbriel` |
 | [Hyprland](docs/compositors.md#hyprland) | Supported | 0.42 or newer, needs `xdg-desktop-portal-hyprland` |
 | [Sway](docs/compositors.md#sway) | Supported, untested on hardware | 1.8 or newer, needs `xdg-desktop-portal-wlr` (0.9+ recommended) |
+| [labwc](docs/compositors.md#labwc) | Supported, untested on hardware | 0.7.1 or newer, needs `xdg-desktop-portal-wlr`, `wlr-randr` and a [one-time rc.xml setup](docs/compositors.md#setup-on-labwc) |
 | [KDE Plasma](docs/compositors.md#kde-plasma) | Supported, untested on hardware | Plasma 6, needs `xdg-desktop-portal-kde`; 6.8+ to choose the size |
 | [GNOME](docs/compositors.md#gnome) | Supported, untested on hardware | Needs `xdg-desktop-portal-gnome` |
 | Others | Planned | See [Adding a compositor](docs/architecture.md#adding-a-compositor) |
 
-smon picks the compositor automatically. Use `-compositor umbriel|hyprland|sway|kde|gnome` to override.
+smon picks the compositor automatically. Use `-compositor umbriel|hyprland|sway|labwc|kde|gnome` to override.
 
 ### Receivers
 
@@ -98,7 +99,7 @@ sudo pacman -S --needed go gcc pkgconf pipewire wireplumber pipewire-pulse libpu
 ```
 
 Add the screencast portal for your compositor (`xdg-desktop-portal-umbriel`,
-`xdg-desktop-portal-hyprland`, `xdg-desktop-portal-wlr` for Sway or `xdg-desktop-portal-kde`). Other distributions and optional extras are covered in
+`xdg-desktop-portal-hyprland`, `xdg-desktop-portal-wlr` for Sway and labwc, or `xdg-desktop-portal-kde`). Other distributions and optional extras are covered in
 [Installation](docs/installation.md).
 
 Then build and run it:
@@ -146,7 +147,7 @@ smon cast [flags] <target>  cast to miracast:<name|mac>, airplay:<name|host:port
 | `-tls` | off | `web`: serve the viewer over HTTPS (install smon's certificate on the device first) |
 | `-new-token` | off | Replace the saved access token (old links stop working) |
 | `-audio` | `true` | Add the *Second Monitor (smon)* sound output |
-| `-compositor umbriel\|hyprland\|sway\|kde\|gnome` | detected | Force a compositor backend |
+| `-compositor umbriel\|hyprland\|sway\|labwc\|kde\|gnome` | detected | Force a compositor backend |
 
 Some examples:
 
@@ -172,7 +173,7 @@ All commands, environment variables and files are in the [Usage guide](docs/usag
 | [Installation](docs/installation.md) | Requirements, packages, building, `/dev/uinput` access |
 | [Usage](docs/usage.md) | Commands, flags, extend and mirror modes, environment variables, state files |
 | [Receivers](docs/receivers.md) | Browser, HTTPS and app install, USB, Miracast, AirPlay and webOS setup; firewall rules |
-| [Compositors](docs/compositors.md) | How smon behaves on umbriel, Hyprland, Sway, KDE Plasma and GNOME |
+| [Compositors](docs/compositors.md) | How smon behaves on umbriel, Hyprland, Sway, labwc, KDE Plasma and GNOME |
 | [Audio](docs/audio.md) | The *Second Monitor (smon)* sound output |
 | [Touch, pen and keyboard](docs/touch-input.md) | Using the tablet as a touchscreen, pen tablet and keyboard, and security notes |
 | [Performance and limitations](docs/limitations.md) | Encoder choice, bitrate adaptation, known limits |
@@ -184,6 +185,7 @@ All commands, environment variables and files are in the [Usage guide](docs/usag
 - [x] umbriel
 - [x] Hyprland
 - [x] Sway
+- [x] labwc
 - [x] KDE Plasma 6
 - [x] GNOME
 - [ ] More Wayland compositors (niri, river, Wayfire, …)
