@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   build-arch:
-    runs-on: ubuntu-latest
+    runs-on: docker
     container:
       image: archlinux:latest
     steps:
@@ -64,7 +64,7 @@ jobs:
 
   release:
     needs: [build-arch]
-    runs-on: ubuntu-latest
+    runs-on: docker
     steps:
       - uses: actions/checkout@v7
         with:
@@ -90,7 +90,7 @@ jobs:
 
   changelog:
     needs: release
-    runs-on: ubuntu-latest
+    runs-on: docker
     steps:
       - uses: actions/checkout@v7
         with:
